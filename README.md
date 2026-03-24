@@ -1,52 +1,91 @@
-🚀 SSH DEV TUNNEL (Precifica)
-Utilitário de linha de comando para automação de túneis SSH reversos. Acesse servidores internos da Precifica através de Jump Hosts de forma transparente, com integração nativa para Cursor e VS Code.
+# 🚀 SSH DEV TUNNEL (Precifica)
 
-⚡ Instalação Única (Recomendado)
+Utilitário de linha de comando para automação de túneis SSH reversos. Acesse servidores internos através de Jump Hosts de forma segura, com integração nativa para Cursor e VS Code.
+
+---
+
+## ⚡ Instalação Única (Recomendado)
+
 Configure a ferramenta globalmente no seu Mac ou Windows com apenas um comando. O instalador detectará automaticamente se você possui Docker ou prefere a Instalação Local:
 
-Bash
+```bash
 curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/install.sh | bash
-Após a instalação: Reinicie o terminal ou rode source ~/.zshrc (Mac) / source ~/.bashrc (Windows).
+```
 
-🚀 Como Usar
-Agora que o comando está global, você não precisa mais baixar scripts em cada pasta. Basta digitar:
+Após a instalação, reinicie o terminal ou rode:
 
-Bash
+```bash
+source ~/.zshrc   # Mac
+source ~/.bashrc  # Windows
+```
+
+---
+
+## 🚀 Como Usar
+
+Com a instalação concluída, o comando `tunnel` estará disponível globalmente em qualquer pasta de projeto.
+
+```bash
 tunnel
-🔄 Fluxo de Trabalho
+```
 
-Menu Interativo: Selecione seu Jump Host e o Servidor de Destino (suporte a user@ip).
+---
 
-Senha Única: Insira a senha uma vez para sincronizar a PEM e abrir o túnel.
+## 🔄 Fluxo de Trabalho
 
-Abrir no Editor: O script gerará o comando de abertura. Copie e cole no terminal:
+**1. Menu Interativo:** Selecione seu Jump Host e o Servidor de Destino (IP Interno).
 
-Bash
-cursor "/Users/seu-user/.../projeto.code-workspace"
-Conectar SSH FS: No editor: Ctrl+Shift+P → SSH FS: Add as Workspace folder → Selecione o servidor.
+**2. Senha Única:** Insira a senha uma vez; ela será usada para sincronizar a chave `.pem` e abrir o túnel.
 
-📋 Pré-requisitos
-O instalador oferecerá as opções baseadas no que você tem disponível:
+**3. Abrir no Editor:** O script gerará o comando de abertura do Workspace. Copie e cole no terminal:
 
-Via Docker (Melhor Experiência): Requer apenas o Docker Desktop rodando. Não polui seu sistema com dependências.
+```bash
+cursor "/Users/seu-user/caminho/projeto.code-workspace"
+```
 
-Via Python (Local): Requer Python 3.10+ e sshpass instalado manualmente.
+**4. Conectar SSH FS:** No editor: `Ctrl+Shift+P` → `SSH FS: Add as Workspace folder` → Selecione o alias criado.
 
-📁 Onde ficam meus dados?
-Para garantir que seus servidores cadastrados não sumam em atualizações:
+---
 
-Método	Localização dos Dados (Host)
-Docker	~/.dev_tunnel_config/
-Local	~/.dev_tunnel/.data/
-🛠️ Solução de Problemas
-Porta 2222 ocupada: O túnel usa a porta 2222. Verifique se não há outra instância rodando com docker ps.
+## 📋 Métodos de Instalação
 
-Comando 'tunnel' não encontrado: Certifique-se de ter reiniciado o terminal após rodar o install.sh.
+O instalador inteligente oferecerá as opções baseadas no seu ambiente:
+
+- **Opção 1 — Via Docker (Melhor Experiência):** Requer apenas o Docker Desktop rodando. É a opção mais limpa, pois isola todas as dependências (como `sshpass`) dentro de um container.
+- **Opção 2 — Via Python (Local):** Requer Python 3.10+ e `sshpass` instalado manualmente no seu sistema operacional.
+
+---
+
+## 📁 Persistência de Dados
+
+Seus servidores cadastrados e chaves PEM são mantidos localmente para persistirem entre atualizações:
+
+| Método de Uso | Localização dos Dados (Host) |
+|---------------|------------------------------|
+| Docker        | `~/.dev_tunnel_config/`      |
+| Local         | `~/.dev_tunnel/.data/`       |
+
+---
+
+## 🗑️ Desinstalação
+
+Caso precise remover os atalhos e configurações do seu sistema:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/uninstall.sh | bash
+```
+
+---
+
+## 🛠️ Solução de Problemas
+
+- **Porta 2222 ocupada:** O túnel utiliza a porta `2222`. Certifique-se de que não há outra instância rodando (`docker ps`).
+- **Comando 'tunnel' não encontrado:** Verifique se você reiniciou o terminal após a instalação para carregar o novo `alias`.
+
+---
 
 <div align="center">
-
-<p align="center">
-<img src="https://img.shields.io/static/v1?label=IRL&message=FULL%20STACK%20DEVOPS&color=2d2d2d&style=for-the-badge&logo=GitHub">
-</p>
-
+  <p align="center">
+    <img src="https://img.shields.io/static/v1?label=IRL&message=FULL%20STACK%20DEVOPS&color=2d2d2d&style=for-the-badge&logo=GitHub">
+  </p>
 </div>
