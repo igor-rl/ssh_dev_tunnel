@@ -4,7 +4,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, urllib.re
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "1.1.2" 
+__version__ = "1.1.3" 
 REPO_URL    = "https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/src/main.py"
 INSTALL_CMD = "pip3 install --upgrade git+https://github.com/igor-rl/ssh_dev_tunnel.git"
 
@@ -174,15 +174,20 @@ def main():
 
     # 5. Final
     draw_static_header(breadcrumb=j_str, server=server)
+    
     print(f"\n  {Colors.SUCCESS}● TÚNEL ATIVO [Localhost:{TUNNEL_PORT}]{Colors.ENDC}")
     full_ws_path = os.path.abspath(ws_path)
-    print(f"\n  {Colors.BOLD}1. IR PARA A PASTA{Colors.ENDC}")
-    print(f"     cd {ws_dir}")
-    print(f"\n  {Colors.BOLD}2. ABRIR NO EDITOR (COPIE E COLE){Colors.ENDC}")
+
+    print(f"\n  {Colors.BOLD}1. ABRIR NO EDITOR (COPIE E COLE){Colors.ENDC}")
     print(f"     {Colors.ACCENT}cursor \"{full_ws_path}\"{Colors.ENDC}")
     print(f"     {Colors.ACCENT}code \"{full_ws_path}\"{Colors.ENDC}")
+
+    print(f"\n  {Colors.BOLD}2. INSTALE A EXTENSÃO SSH FH{Colors.ENDC}")
+    print(f"    {Colors.ACCENT}Kelvin.vscode-sshfs{Colors.ENDC}")
+
     print(f"\n  {Colors.BOLD}3. CONECTAR NO SSH FS{Colors.ENDC}")
-    print(f"     Ctrl+Shift+P → SSH FS: Connect → {server['alias']}")
+    print(f"     Ctrl+Shift+P → SSH FS: Add as Workspace folder → {server['alias']}")
+
     print(f"\n{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
     try:
         input(f"  {Colors.WARN}O túnel será fechado ao pressionar [ENTER]...{Colors.ENDC}")
