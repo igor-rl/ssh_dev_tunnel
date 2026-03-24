@@ -21,10 +21,7 @@ class Colors:
     DIM     = '\033[2m'
 
 # ─── Detecção de Ambiente e Caminhos ───────────────────────────
-# Verifica se estamos dentro do Docker pelo arquivo .dockerenv ou pela variável de ambiente
 IS_DOCKER = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
-
-# No Docker, usamos /app para bater com o volume do docker-compose.yml
 BASE_DIR = os.path.expanduser("~/.dev_tunnel") if not IS_DOCKER else "/app/.dev_tunnel"
 
 DATA_DIR = os.path.join(BASE_DIR, ".data")
@@ -39,26 +36,6 @@ for d in [DATA_DIR, LOCAL_SSH_DIR, WS_ROOT]:
     if not os.path.exists(d): os.makedirs(d, mode=0o700)
 
 # ─── Helpers de Sistema ────────────────────────────────────────
-
-def check_for_updates():
-    if IS_DOCKER: return # Atualização via Rebuild no Docker
-    try:
-        print(f"{Colors.DIM}🔍 Verificando atualizações...{Colors.ENDC}", end="\r")
-        with urllib.request.urlopen(REPO_URL, timeout=3) as response:
-            content = response.read().decode('utf-8')
-            for line in content.split('\n'):
-                if '__version__' in line and '=' in line:
-                    parts = line.split('=')[1].split('#')[0].strip()
-                    remote_v = parts.replace('"', '').replace("'", "")
-                    if remote_v > __version__:
-                        print(f"{Colors.WARN}✨ Nova versão disponível: {remote_v}{Colors.ENDC}")
-                        choice = input(f"  Deseja atualizar? [Y/n]: ").strip().lower()
-                        if choice in ('', 'y', 'yes'):
-                            subprocess.run(INSTALL_CMD.split(), check=True)
-                            sys.exit(0)
-                    break
-    except Exception: pass 
-    print(" " * 50, end="\r")
 
 def getch():
     fd = sys.stdin.fileno()
@@ -86,12 +63,18 @@ def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
-def open_tunnel(jump, server):
+def open_tunnel(jump, server, cached_pw=None):
     if is_port_in_use(TUNNEL_PORT): return "existing"
-    print(f"\n  {Colors.WARN}🔒 Senha para {jump['user']}@{jump['host']}:{Colors.ENDC}")
-    pw = getpass.getpass("  > ")
+    
+    if cached_pw:
+        pw = cached_pw
+    else:
+        print(f"\n  {Colors.WARN}🔒 Senha para {jump['user']}@{jump['host']}:{Colors.ENDC}")
+        pw = getpass.getpass("  > ")
+    
     cmd = ["sshpass", "-p", pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
     for _ in range(15):
         if is_port_in_use(TUNNEL_PORT): return proc
         time.sleep(1)
@@ -118,18 +101,18 @@ def interactive_menu(options, title, breadcrumb=""):
         elif char.lower() == 'q': sys.exit(0)
 
 def main():
-    check_for_updates()
-
+    # Carrega config
     if not os.path.exists(CONFIG_FILE):
         config = {"jump_hosts": [], "servers": []}
     else:
         with open(CONFIG_FILE, "r") as f: config = json.load(f)
     
+    # Menu Jump Host
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "Origem (Jump Host)")
     
     if idx == len(j_opts) - 1:
-        draw_static_header("Setup")
+        draw_static_header("Setup Jump")
         entry = input(f"\n  User@Host: ").strip()
         if "@" not in entry: return
         u, h = entry.split("@"); jump = {"host": h, "user": u}
@@ -137,44 +120,53 @@ def main():
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else: jump = config["jump_hosts"][idx]
 
+    # Lógica de Senha e PEM
+    session_pw = None
     if not os.path.exists(LOCAL_PEM_PATH):
         draw_static_header(f"{jump['user']}@{jump['host']}")
         print(f"\n  {Colors.INFO}Sincronizando chave PEM...{Colors.ENDC}")
-        pw = getpass.getpass(f"  Senha SCP: ")
-        subprocess.run(["sshpass", "-p", pw, "scp", "-o", "StrictHostKeyChecking=no", f"{jump['user']}@{jump['host']}:~/.ssh/{PEM_FILENAME}", LOCAL_PEM_PATH])
-        if os.path.exists(LOCAL_PEM_PATH): os.chmod(LOCAL_PEM_PATH, 0o600)
+        session_pw = getpass.getpass(f"  Senha Jump ({jump['user']}): ")
+        res = subprocess.run(["sshpass", "-p", session_pw, "scp", "-o", "StrictHostKeyChecking=no", f"{jump['user']}@{jump['host']}:~/.ssh/{PEM_FILENAME}", LOCAL_PEM_PATH])
+        if res.returncode == 0:
+            os.chmod(LOCAL_PEM_PATH, 0o600)
+        else:
+            print(f"{Colors.ERROR}Falha no SCP. Verifique a senha.{Colors.ENDC}")
+            sys.exit(1)
 
+    # Menu Servidor Destino
     j_str = f"{jump['user']}@{jump['host']}"
     svs = sorted(config["servers"], key=lambda x: x['alias'].lower())
-    s_opts = [f"{s['alias'].ljust(15)} │ {s['host']}" for s in svs] + ["+ Novo Servidor"]
+    s_opts = [f"{s['alias'].ljust(15)} │ {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
     idx = interactive_menu(s_opts, "Destino (Servidor Interno)", breadcrumb=j_str)
     
     if idx == len(s_opts) - 1:
-        server = {"alias": input(f"\n  Alias: "), "host": input(f"  IP Interno: "), "user": "root", "root": input(f"  Path Remoto: ")}
+        draw_static_header("Setup Servidor")
+        alias = input(f"\n  Alias (Ex: Homolog): ").strip()
+        entry = input(f"  User@IP Interno: ").strip()
+        if "@" not in entry: return
+        u, h = entry.split("@")
+        remote_path = input(f"  Path Remoto (Ex: /var/www): ").strip()
+        server = {"alias": alias, "host": h, "user": u, "root": remote_path}
         config["servers"].append(server)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else: server = svs[idx]
 
+    # Conexão
     draw_static_header(breadcrumb=j_str, server=server)
     print(f"\n  {Colors.ACCENT}Conectando...{Colors.ENDC}")
-    tunnel = open_tunnel(jump, server)
+    tunnel = open_tunnel(jump, server, cached_pw=session_pw)
+    
     if not tunnel: 
         print(f"{Colors.ERROR}Falha ao conectar. Verifique VPN/Senha.{Colors.ENDC}")
         sys.exit(1)
 
-    # ─── Geração de Caminhos para o Host (Mac) ──────────────────
+    # Geração de Caminhos
     host_base = os.environ.get('HOST_PROJECT_PATH', '.')
-    
-    # Traduz caminhos de /app (Docker) para o caminho real no Mac
-    if IS_DOCKER:
-        vscode_pem_path = LOCAL_PEM_PATH.replace('/app', host_base)
-    else:
-        vscode_pem_path = LOCAL_PEM_PATH
+    vscode_pem_path = LOCAL_PEM_PATH.replace('/app', host_base) if IS_DOCKER else LOCAL_PEM_PATH
 
     ws_dir = os.path.join(WS_ROOT, server['alias'])
     if not os.path.exists(ws_dir): os.makedirs(ws_dir, mode=0o755)
-    ws_file_name = f"{server['alias']}.code-workspace"
-    ws_path = os.path.join(ws_dir, ws_file_name)
+    ws_path = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
     
     ws_data = {"folders": [], "settings": {"sshfs.configs": [{
         "name": server['alias'], 
@@ -186,21 +178,16 @@ def main():
     }]}}
     with open(ws_path, "w") as f: json.dump(ws_data, f, indent=4)
 
-    # ─── Finalização ──────────────────────────────────────────
+    # UI Final
     draw_static_header(breadcrumb=j_str, server=server)
     print(f"\n  {Colors.SUCCESS}● TÚNEL ATIVO [Localhost:{TUNNEL_PORT}]{Colors.ENDC}")
     
-    abs_ws_path = os.path.abspath(ws_path)
-    display_ws_path = abs_ws_path.replace('/app', host_base) if IS_DOCKER else abs_ws_path
+    display_ws_path = os.path.abspath(ws_path).replace('/app', host_base) if IS_DOCKER else os.path.abspath(ws_path)
 
     print(f"\n  {Colors.BOLD}1. ABRIR NO EDITOR (COPIE E COLE NO MAC){Colors.ENDC}")
     print(f"     {Colors.ACCENT}cursor \"{display_ws_path}\"{Colors.ENDC}")
-    print(f"     {Colors.ACCENT}code \"{display_ws_path}\"{Colors.ENDC}")
 
-    print(f"\n  {Colors.BOLD}2. INSTALE A EXTENSÃO SSH FS{Colors.ENDC}")
-    print(f"     Kelvin.vscode-sshfs")
-
-    print(f"\n  {Colors.BOLD}3. CONECTAR NO SSH FS{Colors.ENDC}")
+    print(f"\n  {Colors.BOLD}2. CONECTAR NO SSH FS{Colors.ENDC}")
     print(f"     Ctrl+Shift+P → SSH FS: Add as Workspace folder → {server['alias']}")
 
     print(f"\n{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
