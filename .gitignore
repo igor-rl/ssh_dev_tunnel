@@ -1,0 +1,17 @@
+.servers.json
+.flux/.ssh/
+**/*.pem
+
+.flux/
+workspaces/
+__pycache__/
+*.egg-info/
+.dev_tunnel/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/

@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      dockerfile: Dockerfile
+    container_name: dev-tunnel
+    ports:
+      - "2222:2222"
+    environment:
+      - HOST_PROJECT_PATH=${PWD}
+    volumes:
+      - ./:/python
+    tty: true
+    stdin_open: true
