@@ -1,48 +1,95 @@
 #!/bin/bash
 
-# Cores para o terminal
+# Cores e Símbolos
 BLUE='\033[38;5;75m'
 GREEN='\033[38;5;114m'
-RED='\033[38;5;196m'
 YELLOW='\033[38;5;220m'
-NC='\033[0m' # No Color
+RED='\033[38;5;196m'
+NC='\033[0m'
+BOLD='\033[1m'
 
-echo -e "${BLUE}🚀 Instalando/Atualizando SSH DEV TUNNEL (Precifica)...${NC}"
+# Configurações do GitHub
+REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
+IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
-# 1. Verifica se o Python3 está instalado
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}❌ Erro: Python3 não encontrado. Instale com 'brew install python' no Mac.${NC}"
-    exit 1
-fi
+# 1. Identificar Perfil do Shell
+if [ -n "$ZSH_VERSION" ]; then PROFILE="$HOME/.zshrc"
+else PROFILE="$HOME/.bash_profile"; fi
+touch "$PROFILE"
 
-# 2. Identifica o gerenciador de pacotes correto (pip3 ou pip)
-PIP_CMD=$(command -v pip3 || command -v pip)
+# 2. Detectar Dependências
+HAS_DOCKER=false
+HAS_PYTHON=false
+if command -v docker &> /dev/null; then HAS_DOCKER=true; fi
+if command -v python3 &> /dev/null; then HAS_PYTHON=true; fi
 
-if [ -z "$PIP_CMD" ]; then
-    echo -e "${YELLOW}⚠️ Pip não encontrado. Tentando ativar via ensurepip...${NC}"
-    python3 -m ensurepip --upgrade --user
-    PIP_CMD=$(command -v pip3 || command -v pip)
-fi
+# 3. Montar Opções do Menu
+options=()
+if [ "$HAS_DOCKER" = true ]; then options+=("Docker (Recomendado - Isolado e Rápido)"); fi
+if [ "$HAS_PYTHON" = true ]; then options+=("Python Local (Requer sshpass instalado)"); fi
+options+=("Sair")
 
-# 3. Instala/Atualiza direto do seu repositório
-# Usamos --user para evitar problemas de permissão no macOS/Linux
-$PIP_CMD install --upgrade --user git+https://github.com/igor-rl/ssh_dev_tunnel.git
-
-if [ $? -eq 0 ]; then
-    # 4. Garante que a pasta de scripts do Python está no PATH do usuário
-    PYTHON_BIN_PATH=$(python3 -m site --user-base)/bin
+# Função de Menu Interativo (Setinhas)
+selected=0
+draw_menu() {
+    clear
+    echo -e "${BLUE}${BOLD}🚀 INSTALADOR SSH DEV TUNNEL (Precifica)${NC}"
+    echo -e "${BLUE}──────────────────────────────────────────────────${NC}"
+    echo -e "Como você deseja instalar a ferramenta?\n"
     
-    if [[ ":$PATH:" != *":$PYTHON_BIN_PATH:"* ]]; then
-        echo -e "${YELLOW}🔧 Adicionando comando 'tunnel' ao seu perfil do terminal...${NC}"
-        echo "export PATH=\"\$PATH:$PYTHON_BIN_PATH\"" >> ~/.zshrc
-        echo "export PATH=\"\$PATH:$PYTHON_BIN_PATH\"" >> ~/.bash_profile
-        export PATH="$PATH:$PYTHON_BIN_PATH"
-    fi
+    for i in "${!options[@]}"; do
+        if [ "$i" -eq "$selected" ]; then
+            echo -e "  ${BLUE}▶ ${BOLD}${options[$i]}${NC}"
+        else
+            echo -e "    ${options[$i]}"
+        fi
+    done
+    echo -e "\n${NC}Use as setas [↑↓] e aperte [ENTER] para confirmar."
+}
 
-    echo -e "\n${GREEN}✅ Instalação concluída com sucesso!${NC}"
-    echo -e "💡 Se o comando não funcionar agora, rode: ${BLUE}source ~/.zshrc${NC}"
-    echo -e "🚀 Digite ${BLUE}'tunnel'${NC} para começar.\n"
+# Loop do Menu
+while true; do
+    draw_menu
+    read -rsn3 key
+    case "$key" in
+        $'\x1b\x5b\x41') ((selected--)); [ $selected -lt 0 ] && selected=$((${#options[@]} - 1)) ;; # Up
+        $'\x1b\x5b\x42') ((selected++)); [ $selected -ge ${#options[@]} ] && selected=0 ;;         # Down
+        "") break ;; # Enter
+    esac
+done
+
+CHOICE="${options[$selected]}"
+
+# 4. Execução da Escolha
+if [[ "$CHOICE" == *"Docker"* ]]; then
+    echo -e "\n${BLUE}🐳 Configurando atalho via Docker...${NC}"
+    sed -i.bak '/alias tunnel=/d' "$PROFILE" 2>/dev/null
+    
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        # Windows
+        CMD="alias tunnel='winpty docker run -it --rm -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(cygpath -m \"\$(pwd)\"):/app\" -e HOST_PROJECT_PATH=\"\$(cygpath -m \"\$(pwd)\")\" $IMAGE'"
+    else
+        # Mac/Linux
+        CMD="alias tunnel='docker run -it --rm -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(pwd):/app\" -e HOST_PROJECT_PATH=\"\$(pwd)\" $IMAGE'"
+    fi
+    echo "$CMD" >> "$PROFILE"
+    echo -e "${GREEN}✅ Atalho Docker configurado!${NC}"
+
+elif [[ "$CHOICE" == *"Python"* ]]; then
+    echo -e "\n${BLUE}🐍 Instalando via Python Local...${NC}"
+    PIP_CMD=$(command -v pip3 || command -v pip)
+    $PIP_CMD install --upgrade --user "git+$REPO_URL"
+    
+    BIN_PATH=$(python3 -m site --user-base)/bin
+    if [[ ":$PATH:" != *":$BIN_PATH:"* ]]; then
+        echo "export PATH=\"\$PATH:$BIN_PATH\"" >> "$PROFILE"
+    fi
+    echo -e "${GREEN}✅ Instalação Local concluída!${NC}"
+
 else
-    echo -e "\n${RED}❌ Ocorreu um erro durante a instalação.${NC}"
-    exit 1
+    echo -e "\nInstalação cancelada."
+    exit 0
 fi
+
+echo -e "\n${YELLOW}💡 Quase lá! Reinicie seu terminal ou rode:${NC} source $PROFILE"
+echo -e "🚀 Depois, digite ${BLUE}'tunnel'${NC} para começar.\n"
