@@ -84,8 +84,17 @@ curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/uninsta
 
 ---
 
+<br/>
+
+---
+
 <div align="center">
-  <p align="center">
-    <img src="https://img.shields.io/static/v1?label=IRL&message=FULL%20STACK%20DEVOPS&color=2d2d2d&style=for-the-badge&logo=GitHub">
-  </p>
+
+<p align="center">
+<img src="https://img.shields.io/static/v1?label=IRL&message=FULL%20STACK%20DEVOPS&color=2d2d2d&style=for-the-badge&logo=GitHub">
+</p>
+
+[![GitHub](https://img.shields.io/badge/GitHub-Igor_Lage-blue?style=social&logo=github)](https://github.com/igor-rl) 
+![Static Badge](https://img.shields.io/badge/24--03--2026-black)
+
 </div>
