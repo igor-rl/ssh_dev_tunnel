@@ -8,6 +8,6 @@ services:
     environment:
       - HOST_PROJECT_PATH=${PWD}
     volumes:
-      - ./:/python
+      - ./:/app
     tty: true
     stdin_open: true

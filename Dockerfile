@@ -11,12 +11,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN ln -s /usr/local/bin/python3 /usr/local/bin/py
+# Copia os arquivos de configuração primeiro para aproveitar o cache do Docker
+COPY setup.py .
+COPY src/ ./src/
 
-COPY . .
+# Instala o pacote globalmente
+RUN pip install --no-cache-dir -e .
 
-RUN pip install -e .
-
+# Cria a pasta de config
 RUN mkdir -p /root/.dev_tunnel && chmod 700 /root/.dev_tunnel
 
 CMD ["tail", "-f", "/dev/null"]

@@ -4,7 +4,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, urllib.re
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "1.1.6"
+__version__ = "1.2.0" 
 REPO_URL    = "https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/src/main.py"
 INSTALL_CMD = "pip3 install --upgrade git+https://github.com/igor-rl/ssh_dev_tunnel.git"
 
@@ -20,8 +20,13 @@ class Colors:
     BOLD    = '\033[1m'
     DIM     = '\033[2m'
 
-# ─── Configurações de Caminho ───────────────────────────────────
-BASE_DIR = os.path.expanduser("~/.dev_tunnel") 
+# ─── Detecção de Ambiente e Caminhos ───────────────────────────
+# Verifica se estamos dentro do Docker pelo arquivo .dockerenv ou pela variável de ambiente
+IS_DOCKER = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
+
+# No Docker, usamos /app para bater com o volume do docker-compose.yml
+BASE_DIR = os.path.expanduser("~/.dev_tunnel") if not IS_DOCKER else "/app/.dev_tunnel"
+
 DATA_DIR = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
 WS_ROOT = os.path.join(BASE_DIR, "workspaces")
@@ -36,28 +41,23 @@ for d in [DATA_DIR, LOCAL_SSH_DIR, WS_ROOT]:
 # ─── Helpers de Sistema ────────────────────────────────────────
 
 def check_for_updates():
-    """Verifica atualização limpando comentários para evitar loops."""
+    if IS_DOCKER: return # Atualização via Rebuild no Docker
     try:
         print(f"{Colors.DIM}🔍 Verificando atualizações...{Colors.ENDC}", end="\r")
         with urllib.request.urlopen(REPO_URL, timeout=3) as response:
             content = response.read().decode('utf-8')
             for line in content.split('\n'):
                 if '__version__' in line and '=' in line:
-                    # Limpa a linha: remove espaços, aspas e comentários
                     parts = line.split('=')[1].split('#')[0].strip()
                     remote_v = parts.replace('"', '').replace("'", "")
-                    
                     if remote_v > __version__:
-                        print(f"{Colors.WARN}✨ Nova versão disponível: {remote_v} (Atual: {__version__}){Colors.ENDC}")
-                        choice = input(f"  Deseja atualizar agora? [Y/n]: ").strip().lower()
+                        print(f"{Colors.WARN}✨ Nova versão disponível: {remote_v}{Colors.ENDC}")
+                        choice = input(f"  Deseja atualizar? [Y/n]: ").strip().lower()
                         if choice in ('', 'y', 'yes'):
-                            print(f"{Colors.ACCENT}🚀 Atualizando...{Colors.ENDC}")
                             subprocess.run(INSTALL_CMD.split(), check=True)
-                            print(f"{Colors.SUCCESS}✅ Atualizado! Reinicie com o comando 'tunnel'.{Colors.ENDC}")
                             sys.exit(0)
                     break
-    except Exception:
-        pass 
+    except Exception: pass 
     print(" " * 50, end="\r")
 
 def getch():
@@ -72,14 +72,30 @@ def getch():
 
 def draw_static_header(breadcrumb="", server=None):
     os.system("clear")
+    mode = f"{Colors.DIM}[DOCKER]{Colors.ENDC}" if IS_DOCKER else f"{Colors.DIM}[LOCAL]{Colors.ENDC}"
     print(f"{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
-    print(f"  {Colors.BOLD}{__company__.upper()}{Colors.ENDC} │ {Colors.ACCENT}SSH DEV TUNNEL{Colors.ENDC} {Colors.DIM}v{__version__}{Colors.ENDC}")
+    print(f"  {Colors.BOLD}{__company__.upper()}{Colors.ENDC} │ {Colors.ACCENT}SSH DEV TUNNEL{Colors.ENDC} {Colors.DIM}v{__version__}{Colors.ENDC} {mode}")
     if server:
         print(f"  {Colors.DIM}SESSÃO: {Colors.BOLD}{server['alias'].upper()}{Colors.ENDC}")
         print(f"  {Colors.DIM}ROTA:   {Colors.INFO}{breadcrumb} {Colors.DIM}→{Colors.ENDC} {server['user']}@{server['host']}")
     elif breadcrumb:
         print(f"  {Colors.DIM}PATH:   {Colors.INFO}{breadcrumb}{Colors.ENDC}")
     print(f"{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
+
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+def open_tunnel(jump, server):
+    if is_port_in_use(TUNNEL_PORT): return "existing"
+    print(f"\n  {Colors.WARN}🔒 Senha para {jump['user']}@{jump['host']}:{Colors.ENDC}")
+    pw = getpass.getpass("  > ")
+    cmd = ["sshpass", "-p", pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(15):
+        if is_port_in_use(TUNNEL_PORT): return proc
+        time.sleep(1)
+    return None
 
 def interactive_menu(options, title, breadcrumb=""):
     selected_index = 0
@@ -100,21 +116,6 @@ def interactive_menu(options, title, breadcrumb=""):
             elif char == 'B': selected_index = (selected_index + 1) % len(options)
         elif char in ('\r', '\n'): return selected_index
         elif char.lower() == 'q': sys.exit(0)
-
-def is_port_in_use(port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("127.0.0.1", port)) == 0
-
-def open_tunnel(jump, server):
-    if is_port_in_use(TUNNEL_PORT): return "existing"
-    print(f"\n  {Colors.WARN}🔒 Senha para {jump['user']}@{jump['host']}:{Colors.ENDC}")
-    pw = getpass.getpass("  > ")
-    cmd = ["sshpass", "-p", pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(15):
-        if is_port_in_use(TUNNEL_PORT): return proc
-        time.sleep(1)
-    return None
 
 def main():
     check_for_updates()
@@ -161,26 +162,40 @@ def main():
         print(f"{Colors.ERROR}Falha ao conectar. Verifique VPN/Senha.{Colors.ENDC}")
         sys.exit(1)
 
+    # ─── Geração de Caminhos para o Host (Mac) ──────────────────
+    host_base = os.environ.get('HOST_PROJECT_PATH', '.')
+    
+    # Traduz caminhos de /app (Docker) para o caminho real no Mac
+    if IS_DOCKER:
+        vscode_pem_path = LOCAL_PEM_PATH.replace('/app', host_base)
+    else:
+        vscode_pem_path = LOCAL_PEM_PATH
+
     ws_dir = os.path.join(WS_ROOT, server['alias'])
     if not os.path.exists(ws_dir): os.makedirs(ws_dir, mode=0o755)
     ws_file_name = f"{server['alias']}.code-workspace"
     ws_path = os.path.join(ws_dir, ws_file_name)
     
     ws_data = {"folders": [], "settings": {"sshfs.configs": [{
-        "name": server['alias'], "host": "127.0.0.1", "port": TUNNEL_PORT, 
-        "username": server["user"], "privateKeyPath": LOCAL_PEM_PATH, "root": server["root"]
+        "name": server['alias'], 
+        "host": "127.0.0.1", 
+        "port": TUNNEL_PORT, 
+        "username": server["user"], 
+        "privateKeyPath": vscode_pem_path, 
+        "root": server["root"]
     }]}}
     with open(ws_path, "w") as f: json.dump(ws_data, f, indent=4)
 
-    # 5. Final
+    # ─── Finalização ──────────────────────────────────────────
     draw_static_header(breadcrumb=j_str, server=server)
-    
     print(f"\n  {Colors.SUCCESS}● TÚNEL ATIVO [Localhost:{TUNNEL_PORT}]{Colors.ENDC}")
-    full_ws_path = os.path.abspath(ws_path)
+    
+    abs_ws_path = os.path.abspath(ws_path)
+    display_ws_path = abs_ws_path.replace('/app', host_base) if IS_DOCKER else abs_ws_path
 
-    print(f"\n  {Colors.BOLD}1. ABRIR NO EDITOR (COPIE E COLE){Colors.ENDC}")
-    print(f"     {Colors.ACCENT}cursor \"{full_ws_path}\"{Colors.ENDC}")
-    print(f"     {Colors.ACCENT}code \"{full_ws_path}\"{Colors.ENDC}")
+    print(f"\n  {Colors.BOLD}1. ABRIR NO EDITOR (COPIE E COLE NO MAC){Colors.ENDC}")
+    print(f"     {Colors.ACCENT}cursor \"{display_ws_path}\"{Colors.ENDC}")
+    print(f"     {Colors.ACCENT}code \"{display_ws_path}\"{Colors.ENDC}")
 
     print(f"\n  {Colors.BOLD}2. INSTALE A EXTENSÃO SSH FS{Colors.ENDC}")
     print(f"     Kelvin.vscode-sshfs")
