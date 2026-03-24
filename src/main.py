@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-import json, os, sys, subprocess, socket, time, getpass, tty, termios
+import json, os, sys, subprocess, socket, time, getpass, tty, termios, urllib.request
 
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "1.1"
+__version__ = "1.1.0"  # Incrementado para refletir a nova funcionalidade
+REPO_URL    = "https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/src/main.py"
+INSTALL_CMD = "pip3 install --upgrade git+https://github.com/igor-rl/ssh_dev_tunnel.git"
 
 # ─── Configurações de Cores ─────────────────────────────────────
 class Colors:
@@ -28,12 +30,32 @@ PEM_FILENAME = "precifica-NV-service.pem"
 LOCAL_PEM_PATH = os.path.join(LOCAL_SSH_DIR, PEM_FILENAME)
 TUNNEL_PORT = 2222
 
-# Garante a existência das pastas
 for d in [DATA_DIR, LOCAL_SSH_DIR, WS_ROOT]:
-    if not os.path.exists(d): 
-        os.makedirs(d, mode=0o700)
+    if not os.path.exists(d): os.makedirs(d, mode=0o700)
 
-# ─── UI Helpers ─────────────────────────────────────────────────
+# ─── Helpers de Sistema ────────────────────────────────────────
+
+def check_for_updates():
+    """Verifica se existe uma versão mais recente no GitHub."""
+    try:
+        print(f"{Colors.DIM}🔍 Verificando atualizações...{Colors.ENDC}", end="\r")
+        with urllib.request.urlopen(REPO_URL, timeout=3) as response:
+            content = response.read().decode('utf-8')
+            for line in content.split('\n'):
+                if '__version__' in line and '=' in line:
+                    remote_version = line.split('=')[1].strip().replace('"', '').replace("'", "")
+                    if remote_version > __version__:
+                        print(f"{Colors.WARN}✨ Nova versão disponível: {remote_version} (Atual: {__version__}){Colors.ENDC}")
+                        choice = input(f"  Deseja atualizar agora? [Y/n]: ").strip().lower()
+                        if choice in ('', 'y', 'yes'):
+                            print(f"{Colors.ACCENT}🚀 Atualizando...{Colors.ENDC}")
+                            subprocess.run(INSTALL_CMD.split(), check=True)
+                            print(f"{Colors.SUCCESS}✅ Atualizado com sucesso! Reinicie o tunnel.{Colors.ENDC}")
+                            sys.exit(0)
+                    break
+    except Exception:
+        pass # Silencioso se estiver sem internet ou erro de timeout
+    print(" " * 40, end="\r") # Limpa a linha do "Verificando..."
 
 def getch():
     fd = sys.stdin.fileno()
@@ -49,7 +71,6 @@ def draw_static_header(breadcrumb="", server=None):
     os.system("clear")
     print(f"{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
     print(f"  {Colors.BOLD}{__company__.upper()}{Colors.ENDC} │ {Colors.ACCENT}SSH DEV TUNNEL{Colors.ENDC} {Colors.DIM}v{__version__}{Colors.ENDC}")
-    print(f"  {Colors.DIM}Dev: {__author__}{Colors.ENDC}")
     
     if server:
         print(f"  {Colors.DIM}SESSÃO: {Colors.BOLD}{server['alias'].upper()}{Colors.ENDC}")
@@ -96,112 +117,81 @@ def open_tunnel(jump, server):
     return None
 
 def main():
+    check_for_updates() # Verifica update antes de começar
+
     if not os.path.exists(CONFIG_FILE):
         config = {"jump_hosts": [], "servers": []}
     else:
         with open(CONFIG_FILE, "r") as f: config = json.load(f)
     
-    # 1. Seleção de Jump Host
+    # 1. Origem
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "Origem (Jump Host)")
     
     if idx == len(j_opts) - 1:
         draw_static_header("Setup")
         entry = input(f"\n  User@Host: ").strip()
-        if "@" not in entry:
-            print(f"{Colors.RED}Erro: Use o formato user@host{Colors.ENDC}"); time.sleep(2); return
-        u, h = entry.split("@")
-        jump = {"host": h, "user": u}
+        if "@" not in entry: return
+        u, h = entry.split("@"); jump = {"host": h, "user": u}
         config["jump_hosts"].append(jump)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
-    else: 
-        jump = config["jump_hosts"][idx]
+    else: jump = config["jump_hosts"][idx]
 
-    # Sincronização da Chave PEM
+    # PEM
     if not os.path.exists(LOCAL_PEM_PATH):
         draw_static_header(f"{jump['user']}@{jump['host']}")
-        print(f"\n  {Colors.INFO}Sincronizando chave PEM via SCP...{Colors.ENDC}")
+        print(f"\n  {Colors.INFO}Sincronizando chave PEM...{Colors.ENDC}")
         pw = getpass.getpass(f"  Senha SCP: ")
-        result = subprocess.run(["sshpass", "-p", pw, "scp", "-o", "StrictHostKeyChecking=no", f"{jump['user']}@{jump['host']}:~/.ssh/{PEM_FILENAME}", LOCAL_PEM_PATH])
+        subprocess.run(["sshpass", "-p", pw, "scp", "-o", "StrictHostKeyChecking=no", f"{jump['user']}@{jump['host']}:~/.ssh/{PEM_FILENAME}", LOCAL_PEM_PATH])
+        if os.path.exists(LOCAL_PEM_PATH): os.chmod(LOCAL_PEM_PATH, 0o600)
 
-        if result.returncode == 0 and os.path.exists(LOCAL_PEM_PATH):
-            os.chmod(LOCAL_PEM_PATH, 0o600)
-            print(f"  {Colors.SUCCESS}✔ Chave sincronizada.{Colors.ENDC}"); time.sleep(1)
-        else:
-            print(f"\n  {Colors.ERROR}❌ Erro ao baixar a chave PEM.{Colors.ENDC}")
-            if os.path.exists(LOCAL_PEM_PATH): os.remove(LOCAL_PEM_PATH)
-            input(f"\n  Pressione [ENTER] para sair..."); return
-
-    # 2. Seleção de Servidor de Destino
+    # 2. Destino
     j_str = f"{jump['user']}@{jump['host']}"
     svs = sorted(config["servers"], key=lambda x: x['alias'].lower())
     s_opts = [f"{s['alias'].ljust(15)} │ {s['host']}" for s in svs] + ["+ Novo Servidor"]
     idx = interactive_menu(s_opts, "Destino (Servidor Interno)", breadcrumb=j_str)
     
     if idx == len(s_opts) - 1:
-        server = {
-            "alias": input(f"\n  Alias (ex: homolog): "), 
-            "host": input(f"  IP Interno: "),
-            "user": "root", 
-            "root": input(f"  Path Remoto (ex: /var/www): ")
-        }
+        server = {"alias": input(f"\n  Alias: "), "host": input(f"  IP Interno: "), "user": "root", "root": input(f"  Path Remoto: ")}
         config["servers"].append(server)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
-    else: 
-        server = svs[idx]
+    else: server = svs[idx]
 
-    # 3. Ativação do Túnel
+    # 3. Túnel
     draw_static_header(breadcrumb=j_str, server=server)
     print(f"\n  {Colors.ACCENT}Conectando...{Colors.ENDC}")
     tunnel = open_tunnel(jump, server)
-    if not tunnel: 
-        print(f"{Colors.ERROR}Falha ao abrir túnel.{Colors.ENDC}"); sys.exit(1)
+    if not tunnel: sys.exit(1)
 
-    # 4. Geração do Workspace (Otimizado para Cursor)
+    # 4. Workspace
     ws_dir = os.path.join(WS_ROOT, server['alias'])
     if not os.path.exists(ws_dir): os.makedirs(ws_dir, mode=0o755)
-    
     ws_file_name = f"{server['alias']}.code-workspace"
     ws_path = os.path.join(ws_dir, ws_file_name)
     
-    ws_data = {
-        "folders": [], 
-        "settings": {
-            "sshfs.configs": [{
-                "name": server['alias'], "host": "127.0.0.1", "port": TUNNEL_PORT, 
-                "username": server["user"], "privateKeyPath": LOCAL_PEM_PATH, "root": server["root"]
-            }]
-        }
-    }
+    ws_data = {"folders": [], "settings": {"sshfs.configs": [{
+        "name": server['alias'], "host": "127.0.0.1", "port": TUNNEL_PORT, 
+        "username": server["user"], "privateKeyPath": LOCAL_PEM_PATH, "root": server["root"]
+    }]}}
     with open(ws_path, "w") as f: json.dump(ws_data, f, indent=4)
 
-    # 5. Interface Final
+    # 5. Final
     draw_static_header(breadcrumb=j_str, server=server)
     print(f"\n  {Colors.SUCCESS}● TÚNEL ATIVO [Localhost:{TUNNEL_PORT}]{Colors.ENDC}")
-    
-    print(f"\n  {Colors.BOLD}1. ACESSAR PASTA DO PROJETO{Colors.ENDC}")
-    print(f"     cd {ws_dir}")
-    
-    print(f"\n  {Colors.BOLD}2. ABRIR NO SEU EDITOR (DIRETO){Colors.ENDC}")
-    print(f"     {Colors.ACCENT}cursor {ws_file_name}{Colors.ENDC}  {Colors.DIM}(Para Cursor){Colors.ENDC}")
-    print(f"     {Colors.ACCENT}code {ws_file_name}{Colors.ENDC}    {Colors.DIM}(Para VS Code){Colors.ENDC}")
-    
-    print(f"\n  {Colors.BOLD}3. CONECTAR SSH FS{Colors.ENDC}")
-    print(f"     Ctrl+Shift+P → SSH FS: Connect → {server['alias']}")
-    
+    print(f"\n  {Colors.BOLD}1. ACESSAR PASTA{Colors.ENDC}\n     cd {ws_dir}")
+    print(f"\n  {Colors.BOLD}2. ABRIR NO EDITOR (DIRETO){Colors.ENDC}")
+    print(f"     {Colors.ACCENT}cursor {ws_file_name}{Colors.ENDC}  {Colors.DIM}(Cursor){Colors.ENDC}")
+    print(f"     {Colors.ACCENT}code {ws_file_name}{Colors.ENDC}    {Colors.DIM}(VS Code){Colors.ENDC}")
+    print(f"\n  {Colors.BOLD}3. CONECTAR NO SSH FS{Colors.ENDC}\n     Ctrl+Shift+P → SSH FS: Connect → {server['alias']}")
     print(f"\n{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
     
     try:
-        print(f"  {Colors.WARN}O túnel será fechado ao encerrar este processo.{Colors.ENDC}")
-        input(f"  Pressione {Colors.BOLD}[ENTER]{Colors.ENDC} para desconectar...")
+        input(f"  {Colors.WARN}Pressione [ENTER] para encerrar...{Colors.ENDC}")
     finally:
-        if isinstance(tunnel, subprocess.Popen): 
-            tunnel.terminate()
-            print(f"\n  {Colors.INFO}Sessão encerrada e túnel liberado.{Colors.ENDC}\n")
+        if isinstance(tunnel, subprocess.Popen): tunnel.terminate()
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n\n  {Colors.WARN}Sessão encerrada pelo usuário.{Colors.ENDC}\n")
         sys.exit(0)
