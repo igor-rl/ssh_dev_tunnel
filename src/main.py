@@ -183,7 +183,7 @@ def main():
     print(f"     {Colors.ACCENT}code \"{full_ws_path}\"{Colors.ENDC}")
 
     print(f"\n  {Colors.BOLD}2. INSTALE A EXTENSÃO SSH FH{Colors.ENDC}")
-    print(f"    {Colors.ACCENT}Kelvin.vscode-sshfs{Colors.ENDC}")
+    print(f"     Kelvin.vscode-sshfs")
 
     print(f"\n  {Colors.BOLD}3. CONECTAR NO SSH FS{Colors.ENDC}")
     print(f"     Ctrl+Shift+P → SSH FS: Add as Workspace folder → {server['alias']}")
