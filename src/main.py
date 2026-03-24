@@ -4,7 +4,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, urllib.re
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "1.1.0"  # Incrementado para refletir a nova funcionalidade
+__version__ = "1.1.1" 
 REPO_URL    = "https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/src/main.py"
 INSTALL_CMD = "pip3 install --upgrade git+https://github.com/igor-rl/ssh_dev_tunnel.git"
 
@@ -36,26 +36,29 @@ for d in [DATA_DIR, LOCAL_SSH_DIR, WS_ROOT]:
 # ─── Helpers de Sistema ────────────────────────────────────────
 
 def check_for_updates():
-    """Verifica se existe uma versão mais recente no GitHub."""
+    """Verifica atualização limpando comentários para evitar loops."""
     try:
         print(f"{Colors.DIM}🔍 Verificando atualizações...{Colors.ENDC}", end="\r")
         with urllib.request.urlopen(REPO_URL, timeout=3) as response:
             content = response.read().decode('utf-8')
             for line in content.split('\n'):
                 if '__version__' in line and '=' in line:
-                    remote_version = line.split('=')[1].strip().replace('"', '').replace("'", "")
-                    if remote_version > __version__:
-                        print(f"{Colors.WARN}✨ Nova versão disponível: {remote_version} (Atual: {__version__}){Colors.ENDC}")
+                    # Limpa a linha: remove espaços, aspas e comentários
+                    parts = line.split('=')[1].split('#')[0].strip()
+                    remote_v = parts.replace('"', '').replace("'", "")
+                    
+                    if remote_v > __version__:
+                        print(f"{Colors.WARN}✨ Nova versão disponível: {remote_v} (Atual: {__version__}){Colors.ENDC}")
                         choice = input(f"  Deseja atualizar agora? [Y/n]: ").strip().lower()
                         if choice in ('', 'y', 'yes'):
                             print(f"{Colors.ACCENT}🚀 Atualizando...{Colors.ENDC}")
                             subprocess.run(INSTALL_CMD.split(), check=True)
-                            print(f"{Colors.SUCCESS}✅ Atualizado com sucesso! Reinicie o tunnel.{Colors.ENDC}")
+                            print(f"{Colors.SUCCESS}✅ Atualizado! Reinicie com o comando 'tunnel'.{Colors.ENDC}")
                             sys.exit(0)
                     break
     except Exception:
-        pass # Silencioso se estiver sem internet ou erro de timeout
-    print(" " * 40, end="\r") # Limpa a linha do "Verificando..."
+        pass 
+    print(" " * 50, end="\r")
 
 def getch():
     fd = sys.stdin.fileno()
@@ -71,7 +74,6 @@ def draw_static_header(breadcrumb="", server=None):
     os.system("clear")
     print(f"{Colors.HEADER}{'─' * 65}{Colors.ENDC}")
     print(f"  {Colors.BOLD}{__company__.upper()}{Colors.ENDC} │ {Colors.ACCENT}SSH DEV TUNNEL{Colors.ENDC} {Colors.DIM}v{__version__}{Colors.ENDC}")
-    
     if server:
         print(f"  {Colors.DIM}SESSÃO: {Colors.BOLD}{server['alias'].upper()}{Colors.ENDC}")
         print(f"  {Colors.DIM}ROTA:   {Colors.INFO}{breadcrumb} {Colors.DIM}→{Colors.ENDC} {server['user']}@{server['host']}")
@@ -99,8 +101,6 @@ def interactive_menu(options, title, breadcrumb=""):
         elif char in ('\r', '\n'): return selected_index
         elif char.lower() == 'q': sys.exit(0)
 
-# ─── Core ───────────────────────────────────────────────────────
-
 def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(("127.0.0.1", port)) == 0
@@ -111,20 +111,19 @@ def open_tunnel(jump, server):
     pw = getpass.getpass("  > ")
     cmd = ["sshpass", "-p", pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(10):
+    for _ in range(15):
         if is_port_in_use(TUNNEL_PORT): return proc
         time.sleep(1)
     return None
 
 def main():
-    check_for_updates() # Verifica update antes de começar
+    check_for_updates()
 
     if not os.path.exists(CONFIG_FILE):
         config = {"jump_hosts": [], "servers": []}
     else:
         with open(CONFIG_FILE, "r") as f: config = json.load(f)
     
-    # 1. Origem
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "Origem (Jump Host)")
     
@@ -137,7 +136,6 @@ def main():
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else: jump = config["jump_hosts"][idx]
 
-    # PEM
     if not os.path.exists(LOCAL_PEM_PATH):
         draw_static_header(f"{jump['user']}@{jump['host']}")
         print(f"\n  {Colors.INFO}Sincronizando chave PEM...{Colors.ENDC}")
@@ -145,7 +143,6 @@ def main():
         subprocess.run(["sshpass", "-p", pw, "scp", "-o", "StrictHostKeyChecking=no", f"{jump['user']}@{jump['host']}:~/.ssh/{PEM_FILENAME}", LOCAL_PEM_PATH])
         if os.path.exists(LOCAL_PEM_PATH): os.chmod(LOCAL_PEM_PATH, 0o600)
 
-    # 2. Destino
     j_str = f"{jump['user']}@{jump['host']}"
     svs = sorted(config["servers"], key=lambda x: x['alias'].lower())
     s_opts = [f"{s['alias'].ljust(15)} │ {s['host']}" for s in svs] + ["+ Novo Servidor"]
@@ -157,13 +154,13 @@ def main():
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else: server = svs[idx]
 
-    # 3. Túnel
     draw_static_header(breadcrumb=j_str, server=server)
     print(f"\n  {Colors.ACCENT}Conectando...{Colors.ENDC}")
     tunnel = open_tunnel(jump, server)
-    if not tunnel: sys.exit(1)
+    if not tunnel: 
+        print(f"{Colors.ERROR}Falha ao conectar. Verifique VPN/Senha.{Colors.ENDC}")
+        sys.exit(1)
 
-    # 4. Workspace
     ws_dir = os.path.join(WS_ROOT, server['alias'])
     if not os.path.exists(ws_dir): os.makedirs(ws_dir, mode=0o755)
     ws_file_name = f"{server['alias']}.code-workspace"
@@ -175,7 +172,6 @@ def main():
     }]}}
     with open(ws_path, "w") as f: json.dump(ws_data, f, indent=4)
 
-    # 5. Final
     draw_static_header(breadcrumb=j_str, server=server)
     print(f"\n  {Colors.SUCCESS}● TÚNEL ATIVO [Localhost:{TUNNEL_PORT}]{Colors.ENDC}")
     print(f"\n  {Colors.BOLD}1. ACESSAR PASTA{Colors.ENDC}\n     cd {ws_dir}")
