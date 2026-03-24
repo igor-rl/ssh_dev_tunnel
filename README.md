@@ -82,8 +82,6 @@ curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/uninsta
 - **Porta 2222 ocupada:** O túnel utiliza a porta `2222`. Certifique-se de que não há outra instância rodando (`docker ps`).
 - **Comando 'tunnel' não encontrado:** Verifique se você reiniciou o terminal após a instalação para carregar o novo `alias`.
 
----
-
 <br/>
 
 ---
