@@ -12,6 +12,9 @@ BOLD='\033[1m'
 REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
 IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
+# Limpa qualquer input residual no buffer antes de começar
+while read -r -t 0; do read -r; done
+
 # 1. Identificar Perfil do Shell
 if [ -n "$ZSH_VERSION" ]; then PROFILE="$HOME/.zshrc"
 else PROFILE="$HOME/.bash_profile"; fi
@@ -50,11 +53,13 @@ draw_menu() {
 # Loop do Menu
 while true; do
     draw_menu
-    read -rsn3 key
+    # O </dev/tty força o bash a ler o teclado do usuário mesmo via curl
+    read -rsn3 key </dev/tty
     case "$key" in
         $'\x1b\x5b\x41') ((selected--)); [ $selected -lt 0 ] && selected=$((${#options[@]} - 1)) ;; # Up
         $'\x1b\x5b\x42') ((selected++)); [ $selected -ge ${#options[@]} ] && selected=0 ;;         # Down
         "") break ;; # Enter
+        $'\x0a') break ;; # Enter alternativo
     esac
 done
 
@@ -63,7 +68,13 @@ CHOICE="${options[$selected]}"
 # 4. Execução da Escolha
 if [[ "$CHOICE" == *"Docker"* ]]; then
     echo -e "\n${BLUE}🐳 Configurando atalho via Docker...${NC}"
-    sed -i.bak '/alias tunnel=/d' "$PROFILE" 2>/dev/null
+    
+    # Remove alias antigo de forma compatível (Mac/Linux)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' '/alias tunnel=/d' "$PROFILE" 2>/dev/null
+    else
+        sed -i '/alias tunnel=/d' "$PROFILE" 2>/dev/null
+    fi
     
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         # Windows
