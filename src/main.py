@@ -4,7 +4,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, urllib.re
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "1.1.5" 
+__version__ = "1.1.6"
 REPO_URL    = "https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/src/main.py"
 INSTALL_CMD = "pip3 install --upgrade git+https://github.com/igor-rl/ssh_dev_tunnel.git"
 
@@ -182,7 +182,7 @@ def main():
     print(f"     {Colors.ACCENT}cursor \"{full_ws_path}\"{Colors.ENDC}")
     print(f"     {Colors.ACCENT}code \"{full_ws_path}\"{Colors.ENDC}")
 
-    print(f"\n  {Colors.BOLD}2. INSTALE A EXTENSÃO SSH FH{Colors.ENDC}")
+    print(f"\n  {Colors.BOLD}2. INSTALE A EXTENSÃO SSH FS{Colors.ENDC}")
     print(f"     Kelvin.vscode-sshfs")
 
     print(f"\n  {Colors.BOLD}3. CONECTAR NO SSH FS{Colors.ENDC}")
