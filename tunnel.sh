@@ -2,7 +2,7 @@
 
 # ─── Configurações ─────────────────────────────────────────────
 # IMPORTANTE: Substitua 'seu-usuario' pelo seu nome no GitHub
-IMAGE="ghcr.io/seu-usuario/ssh_dev_tunnel:latest"
+IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 CONTAINER_NAME="dev-tunnel"
 LOCAL_CONFIG_DIR="$HOME/.dev_tunnel_config"
 PORT=2222
