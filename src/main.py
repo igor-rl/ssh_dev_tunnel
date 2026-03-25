@@ -4,7 +4,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.5.0"
+__version__ = "3.5.1"
 IMAGE       = "ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
 # ─── Paleta de Cores ────────────────────────────────────────────
@@ -214,7 +214,7 @@ def main():
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
     print(DIV)
 
-    print(f"\n  {C.BOLD}{C.INFO}1. ABRIR NO EDITOR{C.RESET}  {C.DIM}(copie e cole no terminal do seu Mac){C.RESET}\n")
+    print(f"\n  {C.BOLD}{C.INFO}1. ABRIR NO EDITOR{C.RESET}  {C.DIM}(copie e cole no terminal){C.RESET}\n")
     print(f"  {C.LABEL}Cursor{C.RESET}   {C.ACCENT}cursor \"{display_path}\"{C.RESET}")
     print(f"  {C.LABEL}VS Code{C.RESET}  {C.ACCENT}code   \"{display_path}\"{C.RESET}")
 

@@ -101,7 +101,7 @@ if [[ "$CHOICE" == *"Docker"* ]]; then
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
     CMD="alias tunnel='winpty docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(cygpath -m \"\$(pwd)\"):/app\" -e HOST_PROJECT_PATH=\"\$(cygpath -m \"\$(pwd)\")\" $IMAGE'"
   else
-    CMD="alias tunnel='docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(pwd):/app\" -e HOST_PROJECT_PATH=\"\$(pwd)\" $IMAGE'"
+      CMD="alias tunnel='if [ \"\$(pwd)\" = \"\$HOME\" ]; then echo \"\\n  Entre em uma pasta de projeto antes de rodar o tunnel.\\n\"; else docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(pwd):/app\" -e HOST_PROJECT_PATH=\"\$(pwd)\" $IMAGE; fi'"
   fi
 
   echo "$CMD" >> "$PROFILE"
