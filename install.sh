@@ -78,10 +78,10 @@ if [[ "$CHOICE" == *"Docker"* ]]; then
     
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         # Windows
-        CMD="alias tunnel='winpty docker run -it --rm -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(cygpath -m \"\$(pwd)\"):/app\" -e HOST_PROJECT_PATH=\"\$(cygpath -m \"\$(pwd)\")\" $IMAGE'"
+        CMD="alias tunnel='winpty docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(cygpath -m \"\$(pwd)\"):/app\" -e HOST_PROJECT_PATH=\"\$(cygpath -m \"\$(pwd)\")\" $IMAGE'"
     else
         # Mac/Linux
-        CMD="alias tunnel='docker run -it --rm -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(pwd):/app\" -e HOST_PROJECT_PATH=\"\$(pwd)\" $IMAGE'"
+        CMD="alias tunnel='docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(pwd):/app\" -e HOST_PROJECT_PATH=\"\$(pwd)\" $IMAGE'"
     fi
     echo "$CMD" >> "$PROFILE"
     echo -e "${GREEN}✅ Atalho Docker configurado!${NC}"
