@@ -9,7 +9,7 @@ Utilitário de linha de comando para automação de túneis SSH reversos. Acesse
 Configure a ferramenta globalmente no seu Mac ou Windows com apenas um comando. O instalador detectará automaticamente se você possui Docker ou prefere a Instalação Local:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/install.sh -o install.sh && bash install.sh && rm install.sh
 ```
 
 Após a instalação, reinicie o terminal ou rode:
@@ -72,7 +72,7 @@ Seus servidores cadastrados e chaves PEM são mantidos localmente para persistir
 Caso precise remover os atalhos e configurações do seu sistema:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/uninstall.sh -o uninstall.sh && bash uninstall.sh && rm uninstall.sh
 ```
 
 ---
