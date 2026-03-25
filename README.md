@@ -4,6 +4,15 @@ Utilitário de linha de comando para automação de túneis SSH reversos. Acesse
 
 ---
 
+## 🏁 Get Start
+
+Crie uma pasta dedicada para seus projetos de túnel:
+```bash
+mkdir -p ~/projects/ssh && cd ~/projects/ssh
+```
+
+---
+
 ## ⚡ Instalação Única (Recomendado)
 
 Configure a ferramenta globalmente no seu Mac ou Windows com apenas um comando. O instalador detectará automaticamente se você possui Docker ou prefere a Instalação Local:
