@@ -4,7 +4,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, urllib.re
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.3" 
+__version__ = "3.4" 
 REPO_URL    = "https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/src/main.py"
 INSTALL_CMD = "pip3 install --upgrade git+https://github.com/igor-rl/ssh_dev_tunnel.git"
 

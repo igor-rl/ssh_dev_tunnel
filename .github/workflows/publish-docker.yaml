@@ -7,6 +7,10 @@ on:
 
 jobs:
   build-and-push:
+    # FILTRO DE SEGURANÇA: Impede que o workflow rode em duplicidade
+    # Se houver uma tag v*, ele ignora o push da branch main para não gerar 2 builds
+    if: (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) || (github.ref_type == 'branch' && github.ref_name == 'main' && !startsWith(github.event.before, '000000'))
+    
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,8 +33,15 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest
+            # Marca como 'latest' APENAS quando for uma tag (v1.2.3)
+            # Isso evita que um push de teste na main mude a versão estável
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            
+            # Gera a tag com o número da versão (ex: 3.4)
             type=semver,pattern={{version}}
+            
+            # (Opcional) Gera tag com o SHA do commit se for na main (útil para debug)
+            type=sha,enable=${{ github.ref_name == 'main' }}
 
       - name: Build and Push
         uses: docker/build-push-action@v5
