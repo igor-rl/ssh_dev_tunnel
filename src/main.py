@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 import json, os, sys, subprocess, socket, time, getpass, tty, termios
 
+# ─── Proteção contra sudo ───────────────────────────────────────
+if os.geteuid() == 0:
+    print("\n❌ Não execute este comando com sudo.\nExecute como usuário normal.\n")
+    sys.exit(1)
+
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
@@ -132,7 +137,6 @@ def main():
         with open(CONFIG_FILE) as f:
             config = json.load(f)
 
-    # ── Selecionar Jump Host ─────────────────────────────────────
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "Origem — Jump Host")
 
@@ -147,7 +151,6 @@ def main():
     else:
         jump = config["jump_hosts"][idx]
 
-    # ── Sincronizar PEM ──────────────────────────────────────────
     session_pw = None
     if not os.path.exists(LOCAL_PEM):
         draw_header(f"{jump['user']}@{jump['host']}")
@@ -166,7 +169,6 @@ def main():
             err("Falha no SCP. Verifique a senha ou a VPN.")
             sys.exit(1)
 
-    # ── Selecionar Servidor Destino ──────────────────────────────
     j_str = f"{jump['user']}@{jump['host']}"
     svs   = sorted(config["servers"], key=lambda x: x["alias"].lower())
     s_opts = [f"{s['alias'].ljust(14)}  {C.DIVIDER}│{C.RESET}  {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
@@ -185,7 +187,6 @@ def main():
     else:
         server = svs[idx]
 
-    # ── Abrir Túnel ──────────────────────────────────────────────
     draw_header(breadcrumb=j_str, server=server)
     step("⟳", "Abrindo túnel SSH...")
     tunnel = open_tunnel(jump, server, cached_pw=session_pw)
@@ -194,7 +195,6 @@ def main():
         err("Não foi possível abrir o túnel. Verifique a VPN e a senha.")
         sys.exit(1)
 
-    # ── Gerar Workspace ──────────────────────────────────────────
     host_base    = os.environ.get("HOST_PROJECT_PATH", ".")
     pem_path     = LOCAL_PEM.replace("/app", host_base) if IS_DOCKER else LOCAL_PEM
     ws_dir       = os.path.join(WS_ROOT, server["alias"])
@@ -209,7 +209,6 @@ def main():
 
     display_path = os.path.abspath(ws_path).replace("/app", host_base) if IS_DOCKER else os.path.abspath(ws_path)
 
-    # ── UI Final ─────────────────────────────────────────────────
     draw_header(breadcrumb=j_str, server=server)
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
     print(DIV)
@@ -220,7 +219,9 @@ def main():
 
     print(f"\n{DIV}\n")
     print(f"  {C.BOLD}{C.INFO}2. CONECTAR SSH FS{C.RESET}\n")
-    print(f"  {C.DIM}Ctrl+Shift+P  →  SSH FS: Add as Workspace folder  →  {C.RESET}{C.ACCENT}{server['alias']}{C.RESET}")
+    print(f"  {C.DIM}Instale a extensão antes de continuar:{C.RESET}")
+    print(f"  {C.ACCENT}code --install-extension Kelvin.vscode-sshfs{C.RESET}")
+    print(f"\n  {C.DIM}Ctrl+Shift+P  →  SSH FS: Add as Workspace folder  →  {C.RESET}{C.ACCENT}{server['alias']}{C.RESET}")
 
     print(f"\n{DIV}")
     try:
