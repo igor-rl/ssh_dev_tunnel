@@ -8,9 +8,10 @@ if os.geteuid() == 0:
     print("\n❌ Não execute este comando com sudo.\nExecute como usuário normal.\n")
     sys.exit(1)
 
-# ─── Keyring ────────────────────────────────────────────────────
+# ─── Keyring Setup ──────────────────────────────────────────────
 try:
     import keyring
+    from keyring.backends.chroot import ChrootBackend
 except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "keyring"], check=True)
     import keyring
@@ -18,8 +19,7 @@ except ImportError:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.7"
-IMAGE       = "ghcr.io/igor-rl/ssh_dev_tunnel:latest"
+__version__ = "3.6.8"
 KEYRING_SERVICE = "precifica-dev-tunnel"
 
 # ─── Paleta de Cores ────────────────────────────────────────────
@@ -40,7 +40,6 @@ W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Detecção de Ambiente ───────────────────────────────────────
-# Seguindo a lógica da v3.6.6: usa /app/.dev_tunnel se estiver no Docker
 IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
 BASE_DIR    = "/app/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
@@ -53,20 +52,13 @@ for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
         os.makedirs(d, mode=0o700, exist_ok=True)
 
-# ─── Check for Updates ───────────────────────────────────────────
-def check_for_updates():
-    try:
-        repo = "igor-rl/ssh_dev_tunnel"
-        url = f"https://api.github.com/repos/{repo}/releases/latest"
-        with urllib.request.urlopen(url, timeout=2) as response:
-            data = json.loads(response.read().decode())
-            latest = data['tag_name'].replace('v', '')
-            if latest != __version__:
-                print(f"\n  {C.WARN}🔔 Nova versão disponível: {C.BOLD}{latest}{C.RESET}")
-                print(f"  {C.DIM}Execute o pull da imagem para atualizar.{C.RESET}\n")
-                print(DIV)
-                time.sleep(1)
-    except: pass
+# ─── Configuração de Backend Keyring para Docker ────────────────
+if IS_DOCKER:
+    # No Docker, usamos um backend de arquivo local dentro da pasta persistente
+    from keyring.backends.file import PlaintextKeyring
+    kr = PlaintextKeyring()
+    kr.file_path = os.path.join(DATA_DIR, "keyring.cfg")
+    keyring.set_keyring(kr)
 
 # ─── Helpers ────────────────────────────────────────────────────
 
@@ -81,13 +73,6 @@ def getch():
 
 def tag(label, value, color=C.INFO):
     return f"  {C.LABEL}{label:<8}{C.RESET}  {color}{value}{C.RESET}"
-
-def step(icon, text, color=C.ACCENT):
-    print(f"\n  {color}{icon}  {C.BOLD}{text}{C.RESET}")
-
-def ok(text): print(f"  {C.SUCCESS}✔  {text}{C.RESET}")
-def err(text): print(f"  {C.ERROR}✘  {text}{C.RESET}")
-def warn(text): print(f"  {C.WARN}⚠  {text}{C.RESET}")
 
 def draw_header(breadcrumb="", server=None):
     os.system("clear")
@@ -131,17 +116,23 @@ def interactive_menu(options, title, breadcrumb="", footer_hint=None):
 
 def get_jump_password(jump):
     user, host = jump['user'], jump['host']
-    saved = keyring.get_password(KEYRING_SERVICE, f"{user}@{host}")
+    try:
+        saved = keyring.get_password(KEYRING_SERVICE, f"{user}@{host}")
+    except:
+        saved = None
+        
     if saved:
-        ok(f"Senha recuperada do keyring para {user}@{host}")
+        print(f"  {C.SUCCESS}✔  Senha recuperada para {user}@{host}{C.RESET}")
         return saved
+    
     draw_header(f"{user}@{host}")
     pw = getpass.getpass(f"\n  {C.WARN}Senha {user}@{host}:{C.RESET}  ")
-    print(f"\n  {C.BOLD}Salvar senha no keyring do sistema?{C.RESET}\n")
+    print(f"\n  {C.BOLD}Salvar senha?{C.RESET} {C.DIM}(será salva em {DATA_DIR if IS_DOCKER else 'OS Keyring'}){C.RESET}")
     print(f"  {C.ACCENT}▶  S  Sim / N  Não{C.RESET}")
+    
     if getch().lower() == 's':
         keyring.set_password(KEYRING_SERVICE, f"{user}@{host}", pw)
-        ok("Senha salva.")
+        print(f"  {C.SUCCESS}✔  Senha salva.{C.RESET}")
     return pw
 
 def choose_pem_for_server(jump, password, server, config, breadcrumb):
@@ -150,16 +141,16 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     local_path = os.path.join(LOCAL_SSH, saved_pem) if saved_pem else None
 
     if saved_pem and os.path.exists(local_path):
-        ok(f"Usando chave salva: {saved_pem}")
         return local_path, saved_pem
 
-    step("⟳", "Buscando chaves no jump host...")
+    print(f"\n  {C.ACCENT}⟳  Buscando chaves no jump host...{C.RESET}")
     cmd = ["sshpass", "-p", password, "ssh", "-o", "StrictHostKeyChecking=no", 
            f"{jump['user']}@{jump['host']}", "ls ~/.ssh/*.pem ~/.ssh/*.ppk 2>/dev/null | xargs -I{} basename {}"]
     remote_keys = subprocess.run(cmd, capture_output=True, text=True).stdout.splitlines()
     
     if not remote_keys:
-        err("Nenhuma chave encontrada no Jump."); sys.exit(1)
+        print(f"  {C.ERROR}✘ Nenhuma chave encontrada em ~/.ssh/ no Jump Host.{C.RESET}")
+        sys.exit(1)
 
     idx = interactive_menu(remote_keys, f"Chave para {server['alias']}", breadcrumb)
     chosen = remote_keys[idx]
@@ -176,30 +167,31 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
 # ─── Main ───────────────────────────────────────────────────────
 
 def main():
-    check_for_updates()
     config = {"jump_hosts": [], "servers": [], "pem_by_server": {}}
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE) as f:
             try: config.update(json.load(f))
             except: pass
 
-    # 1. Jump Host
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "1. Origem — Jump Host")
+    
     if idx == len(j_opts) - 1:
         draw_header("Novo Jump Host")
-        u, h = input(f"\n  {C.LABEL}User@Host:{C.RESET}  ").strip().split("@")
+        entry = input(f"\n  {C.LABEL}User@Host:{C.RESET}  ").strip()
+        u, h = entry.split("@")
         jump = {"host": h, "user": u}
         config["jump_hosts"].append(jump)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
-    else: jump = config["jump_hosts"][idx]
+    else: 
+        jump = config["jump_hosts"][idx]
     
     session_pw = get_jump_password(jump)
 
-    # 2. Servidor Interno
     svs = sorted(config["servers"], key=lambda x: x["alias"].lower())
-    s_opts = [f"{s['alias'].ljust(14)}  {C.DIVIDER}│{C.RESET}  {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
+    s_opts = [f"{s['alias'].ljust(14)}  │  {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
     idx = interactive_menu(s_opts, "2. Destino — Servidor Interno", f"{jump['user']}@{jump['host']}")
+    
     if idx == len(s_opts) - 1:
         draw_header("Novo Servidor")
         alias = input(f"\n  {C.LABEL}Alias:{C.RESET}  ").strip()
@@ -208,22 +200,19 @@ def main():
         server = {"alias": alias, "host": h, "user": u, "root": path}
         config["servers"].append(server)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
-    else: server = svs[idx]
+    else: 
+        server = svs[idx]
 
-    # 3. Túnel e Workspace
     local_pem, pem_name = choose_pem_for_server(jump, session_pw, server, config, jump['host'])
     
-    draw_header(f"{jump['user']}@{jump['host']}", server)
-    step("⟳", "Abrindo túnel SSH...")
-    
-    tunnel = "existing"
     if not is_port_open(TUNNEL_PORT):
         cmd = ["sshpass", "-p", session_pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", 
                f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
+    else:
+        tunnel = "existing"
 
-    # Lógica de path da v3.6.6 (Usando /app e HOST_PROJECT_PATH)
     host_base = os.environ.get("HOST_PROJECT_PATH", ".")
     pem_path_for_vs = local_pem.replace("/app", host_base) if IS_DOCKER else local_pem
     
@@ -237,10 +226,8 @@ def main():
     }]}}
     
     with open(ws_file, "w") as f: json.dump(ws_data, f, indent=4)
-
     display_path = os.path.abspath(ws_file).replace("/app", host_base) if IS_DOCKER else os.path.abspath(ws_file)
 
-    # 4. Finalização
     draw_header(f"{jump['user']}@{jump['host']}", server)
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
     print(DIV)
@@ -249,7 +236,8 @@ def main():
     print(f"  {C.LABEL}VS Code{C.RESET}  {C.ACCENT}code   \"{display_path}\"{C.RESET}")
     print(f"\n{DIV}")
     
-    try: input(f"\n  {C.WARN}Pressione ENTER para encerrar...{C.RESET}")
+    try: 
+        input(f"\n  {C.WARN}Pressione ENTER para encerrar...{C.RESET}")
     finally:
         if isinstance(tunnel, subprocess.Popen): tunnel.terminate()
 
