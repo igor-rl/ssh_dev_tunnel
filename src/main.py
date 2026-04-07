@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
 
-import json, os, sys, subprocess, socket, time, getpass, tty, termios
-import urllib.request
+import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64
 
 # ─── Proteção contra sudo ───────────────────────────────────────
 if os.geteuid() == 0:
     print("\n❌ Não execute este comando com sudo.\nExecute como usuário normal.\n")
     sys.exit(1)
 
-# ─── Keyring Setup ──────────────────────────────────────────────
-try:
-    import keyring
-    from keyring.backends.chroot import ChrootBackend
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "keyring"], check=True)
-    import keyring
-
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.9"
-KEYRING_SERVICE = "precifica-dev-tunnel"
+__version__ = "3.6.10"
 
 # ─── Paleta de Cores ────────────────────────────────────────────
 class C:
@@ -44,6 +34,7 @@ IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH
 BASE_DIR    = "/app/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
+VAULT_FILE  = os.path.join(DATA_DIR, ".vault")  # Onde as senhas codificadas ficam
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
 TUNNEL_PORT = 2222
@@ -52,13 +43,30 @@ for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
         os.makedirs(d, mode=0o700, exist_ok=True)
 
-# ─── Configuração de Backend Keyring para Docker ────────────────
-if IS_DOCKER:
-    # No Docker, usamos um backend de arquivo local dentro da pasta persistente
-    from keyring.backends.file import PlaintextKeyring
-    kr = PlaintextKeyring()
-    kr.file_path = os.path.join(DATA_DIR, "keyring.cfg")
-    keyring.set_keyring(kr)
+# ─── Simple Vault (Base64) ──────────────────────────────────────
+def save_secret(key, value):
+    vault = {}
+    if os.path.exists(VAULT_FILE):
+        try:
+            with open(VAULT_FILE, 'r') as f: vault = json.load(f)
+        except: pass
+    
+    # Codifica em Base64 para não ficar legível
+    encoded = base64.b64encode(value.encode()).decode()
+    vault[key] = encoded
+    
+    with open(VAULT_FILE, 'w') as f:
+        json.dump(vault, f)
+    os.chmod(VAULT_FILE, 0o600)
+
+def get_secret(key):
+    if not os.path.exists(VAULT_FILE): return None
+    try:
+        with open(VAULT_FILE, 'r') as f: vault = json.load(f)
+        if key in vault:
+            return base64.b64decode(vault[key].encode()).decode()
+    except: pass
+    return None
 
 # ─── Helpers ────────────────────────────────────────────────────
 
@@ -112,28 +120,7 @@ def interactive_menu(options, title, breadcrumb="", footer_hint=None):
         elif ch in ('\r', '\n'): return idx
         elif ch.lower() == 'q': sys.exit(0)
 
-# ─── Password & PEM Management ──────────────────────────────────
-
-def get_jump_password(jump):
-    user, host = jump['user'], jump['host']
-    try:
-        saved = keyring.get_password(KEYRING_SERVICE, f"{user}@{host}")
-    except:
-        saved = None
-        
-    if saved:
-        print(f"  {C.SUCCESS}✔  Senha recuperada para {user}@{host}{C.RESET}")
-        return saved
-    
-    draw_header(f"{user}@{host}")
-    pw = getpass.getpass(f"\n  {C.WARN}Senha {user}@{host}:{C.RESET}  ")
-    print(f"\n  {C.BOLD}Salvar senha?{C.RESET} {C.DIM}(será salva em {DATA_DIR if IS_DOCKER else 'OS Keyring'}){C.RESET}")
-    print(f"  {C.ACCENT}▶  S  Sim / N  Não{C.RESET}")
-    
-    if getch().lower() == 's':
-        keyring.set_password(KEYRING_SERVICE, f"{user}@{host}", pw)
-        print(f"  {C.SUCCESS}✔  Senha salva.{C.RESET}")
-    return pw
+# ─── PEM Management ─────────────────────────────────────────────
 
 def choose_pem_for_server(jump, password, server, config, breadcrumb):
     server_key = f"{server['user']}@{server['host']}"
@@ -149,7 +136,7 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     remote_keys = subprocess.run(cmd, capture_output=True, text=True).stdout.splitlines()
     
     if not remote_keys:
-        print(f"  {C.ERROR}✘ Nenhuma chave encontrada em ~/.ssh/ no Jump Host.{C.RESET}")
+        print(f"  {C.ERROR}✘ Nenhuma chave encontrada no Jump Host.{C.RESET}")
         sys.exit(1)
 
     idx = interactive_menu(remote_keys, f"Chave para {server['alias']}", breadcrumb)
@@ -173,6 +160,7 @@ def main():
             try: config.update(json.load(f))
             except: pass
 
+    # 1. Seleção de Jump Host
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "1. Origem — Jump Host")
     
@@ -186,8 +174,22 @@ def main():
     else: 
         jump = config["jump_hosts"][idx]
     
-    session_pw = get_jump_password(jump)
+    # 2. Gerenciamento de Senha (Vault Simples)
+    vault_key = f"jump:{jump['user']}@{jump['host']}"
+    session_pw = get_secret(vault_key)
 
+    if session_pw:
+        print(f"  {C.SUCCESS}✔  Senha recuperada do vault local.{C.RESET}")
+    else:
+        draw_header(f"{jump['user']}@{jump['host']}")
+        session_pw = getpass.getpass(f"\n  {C.WARN}Senha {jump['user']}@{jump['host']}:{C.RESET}  ")
+        print(f"\n  {C.BOLD}Salvar senha codificada?{C.RESET} {C.DIM}(arquivo .vault){C.RESET}")
+        print(f"  {C.ACCENT}▶  S  Sim / N  Não{C.RESET}")
+        if getch().lower() == 's':
+            save_secret(vault_key, session_pw)
+            print(f"  {C.SUCCESS}✔  Senha salva.{C.RESET}")
+
+    # 3. Seleção de Servidor
     svs = sorted(config["servers"], key=lambda x: x["alias"].lower())
     s_opts = [f"{s['alias'].ljust(14)}  │  {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
     idx = interactive_menu(s_opts, "2. Destino — Servidor Interno", f"{jump['user']}@{jump['host']}")
@@ -203,16 +205,17 @@ def main():
     else: 
         server = svs[idx]
 
+    # 4. PEM e Túnel
     local_pem, pem_name = choose_pem_for_server(jump, session_pw, server, config, jump['host'])
     
+    tunnel = "existing"
     if not is_port_open(TUNNEL_PORT):
         cmd = ["sshpass", "-p", session_pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", 
                f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
-    else:
-        tunnel = "existing"
 
+    # 5. Workspace
     host_base = os.environ.get("HOST_PROJECT_PATH", ".")
     pem_path_for_vs = local_pem.replace("/app", host_base) if IS_DOCKER else local_pem
     
