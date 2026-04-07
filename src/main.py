@@ -19,7 +19,7 @@ except ImportError:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.8"
+__version__ = "3.6.9"
 KEYRING_SERVICE = "precifica-dev-tunnel"
 
 # ─── Paleta de Cores ────────────────────────────────────────────
