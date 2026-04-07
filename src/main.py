@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64
+import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, argparse
 
 # ─── Proteção contra sudo ───────────────────────────────────────
 if os.geteuid() == 0:
@@ -10,7 +10,12 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.13" # Incrementado para refletir suporte multi-túnel
+__version__ = "3.7.0"
+
+# ─── Configuração de Argumentos (CLI) ───────────────────────────
+parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
+parser.add_argument('--port', '-p', type=int, default=2222, help='Porta local para o túnel (Padrão: 2222)')
+args = parser.parse_args()
 
 # ─── Paleta de Cores ────────────────────────────────────────────
 class C:
@@ -37,6 +42,7 @@ CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
 VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
+TUNNEL_PORT = args.port  # Agora definido pelo argumento da CLI
 
 for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
@@ -87,6 +93,7 @@ def draw_header(breadcrumb="", server=None):
     if server:
         print(tag("SESSÃO",  server.get('alias', 'NOVO').upper(), C.ACCENT))
         print(tag("ROTA",    f"{breadcrumb}  {C.DIM}→{C.RESET}  {C.INFO}{server['user']}@{server['host']}"))
+        print(tag("PORTA",   f"localhost:{TUNNEL_PORT}", C.WARN))
         print(DIV)
     elif breadcrumb:
         print(tag("PATH", breadcrumb))
@@ -95,7 +102,7 @@ def draw_header(breadcrumb="", server=None):
 def is_port_open(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
-        return s.connect_ex(("127.0.0.1", int(port))) == 0
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 def interactive_menu(options, title, breadcrumb="", footer_hint=None):
     idx = 0
@@ -166,7 +173,7 @@ def main():
         u, h = entry.split("@")
         jump = {"host": h, "user": u}
         config["jump_hosts"].append(jump)
-        with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
+        with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else: 
         jump = config["jump_hosts"][idx]
     
@@ -195,22 +202,18 @@ def main():
         alias = input(f"\n  {C.LABEL}Alias:{C.RESET}  ").strip()
         u, h = input(f"  {C.LABEL}User@IP:{C.RESET}  ").strip().split("@")
         path = input(f"  {C.LABEL}Path Remoto:{C.RESET}  ").strip()
-        port = input(f"  {C.LABEL}Porta Local (Ex: 2222, 2223):{C.RESET}  ").strip()
-        server = {"alias": alias, "host": h, "user": u, "root": path, "port": int(port)}
+        server = {"alias": alias, "host": h, "user": u, "root": path}
         config["servers"].append(server)
-        with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
+        with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else: 
         server = svs[idx]
-        if "port" not in server: # Fallback para servidores antigos
-             server["port"] = 2222
 
     # 4. PEM e Túnel
     local_pem, pem_name = choose_pem_for_server(jump, session_pw, server, config, jump['host'])
     
-    tunnel_port = server["port"]
     tunnel = "existing"
-    if not is_port_open(tunnel_port):
-        cmd = ["sshpass", "-p", session_pw, "ssh", "-N", "-L", f"0.0.0.0:{tunnel_port}:{server['host']}:22", 
+    if not is_port_open(TUNNEL_PORT):
+        cmd = ["sshpass", "-p", session_pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", 
                f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
@@ -221,10 +224,11 @@ def main():
     
     ws_dir = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
-    ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
+    # Inclui a porta no nome do arquivo para não sobrescrever se usar o mesmo alias em portas diferentes
+    ws_file = os.path.join(ws_dir, f"{server['alias']}_p{TUNNEL_PORT}.code-workspace")
     
     ws_data = {"folders": [], "settings": {"sshfs.configs": [{
-        "name": server["alias"], "host": "127.0.0.1", "port": tunnel_port,
+        "name": f"{server['alias']} (Porta {TUNNEL_PORT})", "host": "127.0.0.1", "port": TUNNEL_PORT,
         "username": server["user"], "privateKeyPath": pem_path_for_vs, "root": server["root"]
     }]}}
     
@@ -232,7 +236,7 @@ def main():
     display_path = os.path.abspath(ws_file).replace("/app", host_base) if IS_DOCKER else os.path.abspath(ws_file)
 
     draw_header(f"{jump['user']}@{jump['host']}", server)
-    print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{tunnel_port}{C.RESET}\n")
+    print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
     print(DIV)
     print(f"\n  {C.BOLD}{C.INFO}1. ABRIR NO EDITOR{C.RESET}\n")
     print(f"  {C.LABEL}Cursor{C.RESET}   {C.ACCENT}cursor \"{display_path}\"{C.RESET}")
