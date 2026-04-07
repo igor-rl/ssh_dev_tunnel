@@ -18,7 +18,7 @@ except ImportError:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.4"
+__version__ = "3.6.5"
 IMAGE       = "ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
 KEYRING_SERVICE = "precifica-dev-tunnel"
@@ -42,6 +42,9 @@ DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Detecção de Ambiente ───────────────────────────────────────
 IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
+
+# IMPORTANTE: Se estiver no Docker, BASE_DIR aponta para o volume montado.
+# Caso contrário, aponta para a home local.
 BASE_DIR    = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
@@ -51,13 +54,12 @@ TUNNEL_PORT = 2222
 
 for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
-        os.makedirs(d, mode=0o700)
+        os.makedirs(d, mode=0o700, exist_ok=True)
 
 # ─── Check for Updates ───────────────────────────────────────────
 def check_for_updates():
     """Verifica a última tag lançada no repositório GitHub"""
     try:
-        # Substitua pelo caminho real do seu repositório
         repo = "igor-rl/ssh_dev_tunnel"
         url = f"https://api.github.com/repos/{repo}/releases/latest"
         
@@ -71,9 +73,7 @@ def check_for_updates():
                 print(DIV)
                 time.sleep(1)
     except:
-        # Falha silenciosa se estiver sem internet ou API der erro
         pass
-
 
 # ─── Helpers ────────────────────────────────────────────────────
 
@@ -193,7 +193,7 @@ def get_jump_password(jump):
 
     return pw
 
-# ─── PEM Key Management (AGORA VINCULADO AO DESTINO) ────────────
+# ─── PEM Key Management ─────────────────────────────────────────
 
 def list_remote_pem_keys(jump, password):
     cmd = [
@@ -219,7 +219,6 @@ def sync_pem_key(jump, password, pem_filename):
     return None
 
 def choose_pem_for_server(jump, password, server, config, breadcrumb):
-    # O vínculo agora é 'user@host' do servidor de destino
     server_key = f"{server['user']}@{server['host']}"
     saved_pem  = config.get("pem_by_server", {}).get(server_key)
     local_saved = os.path.join(LOCAL_SSH, saved_pem) if saved_pem else None
@@ -257,7 +256,6 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     else:
         ok(f"Chave {chosen} já disponível localmente.")
 
-    # Salva o vínculo no config
     if "pem_by_server" not in config:
         config["pem_by_server"] = {}
     config["pem_by_server"][server_key] = chosen
@@ -269,6 +267,8 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
 # ─── Main ───────────────────────────────────────────────────────
 
 def main():
+    check_for_updates()
+    
     config = {"jump_hosts": [], "servers": [], "pem_by_server": {}}
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE) as f:
@@ -314,7 +314,7 @@ def main():
     else:
         server = svs[idx]
 
-    # 3. Selecionar Chave PEM (Agora depois do Servidor)
+    # 3. Selecionar Chave PEM
     local_pem, pem_filename = choose_pem_for_server(jump, session_pw, server, config, j_str)
 
     # 4. Abrir Túnel
@@ -348,13 +348,23 @@ def main():
             sys.exit(1)
 
     # 5. Gerar Workspace
+    # HOST_PROJECT_PATH deve ser o diretório base do projeto no seu WSL
     host_base = os.environ.get("HOST_PROJECT_PATH", ".")
-    pem_path  = local_pem.replace("/home/tunnel", host_base) if IS_DOCKER else local_pem
-    ws_dir    = os.path.join(WS_ROOT, server["alias"])
-    os.makedirs(ws_dir, mode=0o755, exist_ok=True)
-    ws_path   = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
     
-    ws_data   = {
+    # Se estiver no Docker, precisamos converter o path interno /home/tunnel/... 
+    # para o path externo do Host para que o VS Code consiga ler a chave.
+    if IS_DOCKER:
+        # A chave está em /home/tunnel/.dev_tunnel/.data/.ssh/...
+        # O Host vê isso em HOST_PROJECT_PATH/.dev_tunnel/.data/.ssh/...
+        pem_path = local_pem.replace("/home/tunnel", host_base)
+    else:
+        pem_path = local_pem
+
+    ws_dir = os.path.join(WS_ROOT, server["alias"])
+    os.makedirs(ws_dir, mode=0o755, exist_ok=True)
+    ws_path = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
+    
+    ws_data = {
         "folders": [], 
         "settings": {
             "sshfs.configs": [{
@@ -370,6 +380,7 @@ def main():
     with open(ws_path, "w") as f:
         json.dump(ws_data, f, indent=4)
 
+    # Converte o path do workspace para o display final
     display_path = os.path.abspath(ws_path).replace("/home/tunnel", host_base) if IS_DOCKER else os.path.abspath(ws_path)
 
     # 6. Output Final
