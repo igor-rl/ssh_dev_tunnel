@@ -24,10 +24,10 @@ header() {
   [ -n "$1" ] && echo -e "  ${LABEL}ETAPA   ${NC}  ${ACCENT}$1${NC}\n$DIV"
 }
 
-ok()   { echo -e "  ${SUCCESS}✔  $1${NC}"; }
-err()  { echo -e "  ${ERROR}✘  $1${NC}"; }
-warn() { echo -e "  ${WARN}⚠  $1${NC}"; }
-info() { echo -e "  ${DIM}$1${NC}"; }
+ok()    { echo -e "  ${SUCCESS}✔  $1${NC}"; }
+err()   { echo -e "  ${ERROR}✘  $1${NC}"; }
+warn()  { echo -e "  ${WARN}⚠  $1${NC}"; }
+info()  { echo -e "  ${DIM}$1${NC}"; }
 
 # ─── Configurações ───────────────────────────────────────────────
 REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
@@ -38,7 +38,7 @@ while read -r -t 0; do read -r; done
 
 # ─── Detectar Perfil do Shell ────────────────────────────────────
 if [ -n "$ZSH_VERSION" ]; then PROFILE="$HOME/.zshrc"
-else PROFILE="$HOME/.bash_profile"; fi
+else PROFILE="$HOME/.bashrc"; fi # Alterado de .bash_profile para .bashrc (mais comum em WSL/Linux)
 touch "$PROFILE"
 
 # ─── Detectar Dependências ───────────────────────────────────────
@@ -88,24 +88,44 @@ if [[ "$CHOICE" == *"Docker"* ]]; then
 
   header "Docker"
   echo ""
-  info "Configurando atalho via Docker..."
+  info "Configurando atalho via Docker com suporte a múltiplas portas..."
 
-  # Remove alias anterior
+  # Remove alias ou função anterior para evitar duplicidade
   if [[ "$OSTYPE" == "darwin"* ]]; then
     sed -i '' '/alias tunnel=/d' "$PROFILE" 2>/dev/null
+    sed -i '' '/tunnel() {/,/}/d' "$PROFILE" 2>/dev/null
   else
     sed -i '/alias tunnel=/d' "$PROFILE" 2>/dev/null
+    sed -i '/tunnel() {/,/}/d' "$PROFILE" 2>/dev/null
   fi
 
-  # Gera o alias correto por SO
-  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    CMD="alias tunnel='winpty docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(cygpath -m \"\$(pwd)\"):/app\" -e HOST_PROJECT_PATH=\"\$(cygpath -m \"\$(pwd)\")\" $IMAGE'"
-  else
-      CMD="alias tunnel='if [ \"\$(pwd)\" = \"\$HOME\" ]; then echo \"\\n  Entre em uma pasta de projeto antes de rodar o tunnel.\\n\"; else docker run -it --rm --pull always -p 2222:2222 -v ~/.dev_tunnel_config:/root/.dev_tunnel -v \"\$(pwd):/app\" -e HOST_PROJECT_PATH=\"\$(pwd)\" $IMAGE; fi'"
-  fi
+  # Gera a função tunnel dinâmica
+  {
+    echo "tunnel() {"
+    echo "  PORT=2222"
+    echo "  if [[ \"\$1\" == \"--port\" && -n \"\$2\" ]]; then PORT=\$2; fi"
+    echo "  if [ \"\$(pwd)\" = \"\$HOME\" ]; then"
+    echo "    echo -e \"\\n  ${ERROR}Erro:${NC} Entre em uma pasta de projeto antes de rodar o tunnel.\\n\""
+    echo "  else"
+    
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+      echo "    winpty docker run -it --rm --pull always -p \$PORT:\$PORT \\"
+      echo "      -v ~/.dev_tunnel_config:/root/.dev_tunnel \\"
+      echo "      -v \"\$(cygpath -m \"\$(pwd)\"):/app\" \\"
+      echo "      -e HOST_PROJECT_PATH=\"\$(cygpath -m \"\$(pwd)\")\" \\"
+      echo "      $IMAGE python3 /app/main.py --port \$PORT"
+    else
+      echo "    docker run -it --rm --pull always -p \$PORT:\$PORT \\"
+      echo "      -v ~/.dev_tunnel_config:/root/.dev_tunnel \\"
+      echo "      -v \"\$(pwd):/app\" \\"
+      echo "      -e HOST_PROJECT_PATH=\"\$(pwd)\" \\"
+      echo "      $IMAGE python3 /app/main.py --port \$PORT"
+    fi
+    echo "  fi"
+    echo "}"
+  } >> "$PROFILE"
 
-  echo "$CMD" >> "$PROFILE"
-  ok "Atalho Docker adicionado em $PROFILE"
+  ok "Função 'tunnel' adicionada em $PROFILE"
 
 elif [[ "$CHOICE" == *"Python"* ]]; then
 
@@ -134,6 +154,8 @@ echo -e "\n$DIV"
 echo -e "\n  ${BOLD}${INFO}PRÓXIMOS PASSOS${NC}\n"
 echo -e "  ${LABEL}1.${NC}  Recarregue o terminal:"
 echo -e "       ${ACCENT}source $PROFILE${NC}\n"
-echo -e "  ${LABEL}2.${NC}  Inicie a ferramenta em qualquer projeto:"
+echo -e "  ${LABEL}2.${NC}  Uso padrão (Porta 2222):"
 echo -e "       ${ACCENT}tunnel${NC}\n"
+echo -e "  ${LABEL}3.${NC}  Uso múltiplo (Outra porta):"
+echo -e "       ${ACCENT}tunnel --port 2223${NC}\n"
 echo -e "$DIV\n"
