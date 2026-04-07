@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json, os, sys, subprocess, socket, time, getpass, tty, termios
+import urllib.request
 
 # ─── Proteção contra sudo ───────────────────────────────────────
 if os.geteuid() == 0:
@@ -17,7 +18,7 @@ except ImportError:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.0"
+__version__ = "3.6.1"
 IMAGE       = "ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
 KEYRING_SERVICE = "precifica-dev-tunnel"
@@ -51,6 +52,28 @@ TUNNEL_PORT = 2222
 for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
         os.makedirs(d, mode=0o700)
+
+# ─── Check for Updates ───────────────────────────────────────────
+def check_for_updates():
+    """Verifica a última tag lançada no repositório GitHub"""
+    try:
+        # Substitua pelo caminho real do seu repositório
+        repo = "igor-rl/ssh_dev_tunnel"
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+        
+        with urllib.request.urlopen(url, timeout=2) as response:
+            data = json.loads(response.read().decode())
+            latest_version = data['tag_name'].replace('v', '')
+            
+            if latest_version != __version__:
+                print(f"\n  {C.WARN}🔔 Nova versão disponível: {C.BOLD}{latest_version}{C.RESET}")
+                print(f"  {C.DIM}Execute o pull da imagem ou baixe o novo script.{C.RESET}\n")
+                print(DIV)
+                time.sleep(1)
+    except:
+        # Falha silenciosa se estiver sem internet ou API der erro
+        pass
+
 
 # ─── Helpers ────────────────────────────────────────────────────
 
