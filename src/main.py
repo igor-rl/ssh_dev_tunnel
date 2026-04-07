@@ -10,7 +10,7 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.10"
+__version__ = "3.6.13" # Incrementado para refletir suporte multi-túnel
 
 # ─── Paleta de Cores ────────────────────────────────────────────
 class C:
@@ -34,10 +34,9 @@ IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH
 BASE_DIR    = "/app/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
-VAULT_FILE  = os.path.join(DATA_DIR, ".vault")  # Onde as senhas codificadas ficam
+VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
-TUNNEL_PORT = 2222
 
 for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
@@ -50,11 +49,8 @@ def save_secret(key, value):
         try:
             with open(VAULT_FILE, 'r') as f: vault = json.load(f)
         except: pass
-    
-    # Codifica em Base64 para não ficar legível
     encoded = base64.b64encode(value.encode()).decode()
     vault[key] = encoded
-    
     with open(VAULT_FILE, 'w') as f:
         json.dump(vault, f)
     os.chmod(VAULT_FILE, 0o600)
@@ -99,7 +95,7 @@ def draw_header(breadcrumb="", server=None):
 def is_port_open(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
-        return s.connect_ex(("127.0.0.1", port)) == 0
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
 
 def interactive_menu(options, title, breadcrumb="", footer_hint=None):
     idx = 0
@@ -170,11 +166,11 @@ def main():
         u, h = entry.split("@")
         jump = {"host": h, "user": u}
         config["jump_hosts"].append(jump)
-        with open(CONFIG_FILE, "w") as f: json.dump(config, f)
+        with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
     else: 
         jump = config["jump_hosts"][idx]
     
-    # 2. Gerenciamento de Senha (Vault Simples)
+    # 2. Gerenciamento de Senha
     vault_key = f"jump:{jump['user']}@{jump['host']}"
     session_pw = get_secret(vault_key)
 
@@ -199,18 +195,22 @@ def main():
         alias = input(f"\n  {C.LABEL}Alias:{C.RESET}  ").strip()
         u, h = input(f"  {C.LABEL}User@IP:{C.RESET}  ").strip().split("@")
         path = input(f"  {C.LABEL}Path Remoto:{C.RESET}  ").strip()
-        server = {"alias": alias, "host": h, "user": u, "root": path}
+        port = input(f"  {C.LABEL}Porta Local (Ex: 2222, 2223):{C.RESET}  ").strip()
+        server = {"alias": alias, "host": h, "user": u, "root": path, "port": int(port)}
         config["servers"].append(server)
-        with open(CONFIG_FILE, "w") as f: json.dump(config, f)
+        with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
     else: 
         server = svs[idx]
+        if "port" not in server: # Fallback para servidores antigos
+             server["port"] = 2222
 
     # 4. PEM e Túnel
     local_pem, pem_name = choose_pem_for_server(jump, session_pw, server, config, jump['host'])
     
+    tunnel_port = server["port"]
     tunnel = "existing"
-    if not is_port_open(TUNNEL_PORT):
-        cmd = ["sshpass", "-p", session_pw, "ssh", "-N", "-L", f"0.0.0.0:{TUNNEL_PORT}:{server['host']}:22", 
+    if not is_port_open(tunnel_port):
+        cmd = ["sshpass", "-p", session_pw, "ssh", "-N", "-L", f"0.0.0.0:{tunnel_port}:{server['host']}:22", 
                f"{jump['user']}@{jump['host']}", "-o", "StrictHostKeyChecking=no"]
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
@@ -224,7 +224,7 @@ def main():
     ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
     
     ws_data = {"folders": [], "settings": {"sshfs.configs": [{
-        "name": server["alias"], "host": "127.0.0.1", "port": TUNNEL_PORT,
+        "name": server["alias"], "host": "127.0.0.1", "port": tunnel_port,
         "username": server["user"], "privateKeyPath": pem_path_for_vs, "root": server["root"]
     }]}}
     
@@ -232,11 +232,12 @@ def main():
     display_path = os.path.abspath(ws_file).replace("/app", host_base) if IS_DOCKER else os.path.abspath(ws_file)
 
     draw_header(f"{jump['user']}@{jump['host']}", server)
-    print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
+    print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{tunnel_port}{C.RESET}\n")
     print(DIV)
     print(f"\n  {C.BOLD}{C.INFO}1. ABRIR NO EDITOR{C.RESET}\n")
     print(f"  {C.LABEL}Cursor{C.RESET}   {C.ACCENT}cursor \"{display_path}\"{C.RESET}")
     print(f"  {C.LABEL}VS Code{C.RESET}  {C.ACCENT}code   \"{display_path}\"{C.RESET}")
+    print(f"\n  {C.WARN}⚠ Certifique-se de ter a extensão 'SSH FS' instalada.{C.RESET}")
     print(f"\n{DIV}")
     
     try: 
