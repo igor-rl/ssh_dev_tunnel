@@ -2,20 +2,24 @@
 
 import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, argparse
 
+# ─── Proteção contra sudo ───────────────────────────────────────
 if os.geteuid() == 0:
     print("\n❌ Não execute este comando com sudo.\nExecute como usuário normal.\n")
     sys.exit(1)
 
+# ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.18"
+__version__ = "3.6.19"
 
+# ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
 parser.add_argument('--port', '-p', type=int, default=2222,
                     help='Porta local preferencial para o túnel (Padrão: 2222). '
                          'Se ocupada, incrementa automaticamente.')
 args = parser.parse_args()
 
+# ─── Paleta de Cores ────────────────────────────────────────────
 class C:
     DIVIDER = '\033[38;5;238m'
     LABEL   = '\033[38;5;244m'
@@ -28,22 +32,26 @@ class C:
     RESET   = '\033[0m'
     BOLD    = '\033[1m'
 
+# ─── Constantes de Layout ───────────────────────────────────────
 W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
+# ─── Detecção de Ambiente ───────────────────────────────────────
 IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
-BASE_DIR    = os.path.expanduser("~/.dev_tunnel")
+BASE_DIR    = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
 VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
 
-for d in [BASE_DIR, DATA_DIR, LOCAL_SSH, WS_ROOT]:
+for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
         os.makedirs(d, mode=0o700, exist_ok=True)
 
+# ─── Porta: escolhe a primeira livre a partir da preferencial ───
 def find_available_port(preferred: int, max_attempts: int = 20) -> int:
+    """Retorna a primeira porta >= preferred que não esteja em uso."""
     for offset in range(max_attempts):
         port = preferred + offset
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -60,6 +68,7 @@ if TUNNEL_PORT != args.port:
     print(f"\n  {C.WARN}⚠  Porta {args.port} ocupada — usando {TUNNEL_PORT}{C.RESET}\n")
     time.sleep(1)
 
+# ─── Simple Vault (Base64) ──────────────────────────────────────
 def save_secret(key, value):
     vault = {}
     if os.path.exists(VAULT_FILE):
@@ -80,6 +89,7 @@ def get_secret(key):
     except: pass
     return None
 
+# ─── Helpers ────────────────────────────────────────────────────
 def getch():
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -132,6 +142,7 @@ def interactive_menu(options, title, breadcrumb="", footer_hint=None):
         elif ch in ('\r', '\n'): return idx
         elif ch.lower() == 'q': sys.exit(0)
 
+# ─── PEM Management ─────────────────────────────────────────────
 def choose_pem_for_server(jump, password, server, config, breadcrumb):
     server_key = f"{server['user']}@{server['host']}"
     saved_pem  = config.get("pem_by_server", {}).get(server_key)
@@ -168,6 +179,7 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
     return local_dest, chosen
 
+# ─── Main ───────────────────────────────────────────────────────
 def main():
     config = {"jump_hosts": [], "servers": [], "pem_by_server": {}}
     if os.path.exists(CONFIG_FILE):
@@ -175,6 +187,7 @@ def main():
             try: config.update(json.load(f))
             except: pass
 
+    # 1. Seleção de Jump Host
     j_opts = [f"{j['user']}@{j['host']}" for j in config["jump_hosts"]] + ["+ Novo Jump Host"]
     idx = interactive_menu(j_opts, "1. Origem — Jump Host")
 
@@ -188,6 +201,7 @@ def main():
     else:
         jump = config["jump_hosts"][idx]
 
+    # 2. Gerenciamento de Senha
     vault_key  = f"jump:{jump['user']}@{jump['host']}"
     session_pw = get_secret(vault_key)
 
@@ -202,6 +216,7 @@ def main():
             save_secret(vault_key, session_pw)
             print(f"  {C.SUCCESS}✔  Senha salva.{C.RESET}")
 
+    # 3. Seleção de Servidor
     svs    = sorted(config["servers"], key=lambda x: x["alias"].lower())
     s_opts = [f"{s['alias'].ljust(14)}  │  {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
     idx    = interactive_menu(s_opts, "2. Destino — Servidor Interno", f"{jump['user']}@{jump['host']}")
@@ -217,8 +232,10 @@ def main():
     else:
         server = svs[idx]
 
+    # 4. PEM e Túnel
     local_pem, pem_name = choose_pem_for_server(jump, session_pw, server, config, jump['host'])
 
+    # TUNNEL_PORT já é a porta livre escolhida no início — só abre se ainda não estiver ativa
     tunnel = "existing"
     if not is_port_open(TUNNEL_PORT):
         cmd = [
@@ -231,8 +248,9 @@ def main():
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
 
-    host_base       = os.environ.get("HOST_PROJECT_PATH", os.path.expanduser("~"))
-    pem_path_for_vs = local_pem.replace(os.path.expanduser("~"), host_base)
+    # 5. Workspace
+    host_base       = os.environ.get("HOST_PROJECT_PATH", ".")
+    pem_path_for_vs = local_pem.replace("/home/tunnel", host_base) if IS_DOCKER else local_pem
 
     ws_dir  = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
@@ -253,7 +271,10 @@ def main():
     }
     with open(ws_file, "w") as f: json.dump(ws_data, f, indent=4)
 
-    display_path = os.path.abspath(ws_file).replace(os.path.expanduser("~"), host_base)
+    display_path = (
+        os.path.abspath(ws_file).replace("/home/tunnel", host_base)
+        if IS_DOCKER else os.path.abspath(ws_file)
+    )
 
     draw_header(f"{jump['user']}@{jump['host']}", server)
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
