@@ -18,7 +18,7 @@ except ImportError:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.1"
+__version__ = "3.6.2"
 IMAGE       = "ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
 KEYRING_SERVICE = "precifica-dev-tunnel"

@@ -12,23 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── Usuário não-root ─────────────────────────────────────────────
-RUN groupadd --gid 1000 tunnel && \
-    useradd --uid 1000 --gid tunnel --shell /bin/bash --create-home tunnel
-
 COPY setup.py .
 COPY src/ ./src/
-
-# Instala dependências (inclui keyring) e o pacote em modo editável
 RUN pip install --no-cache-dir -e .
 
-# Diretório de dados pertencente ao usuário tunnel
-RUN mkdir -p /home/tunnel/.dev_tunnel && \
-    chmod 700 /home/tunnel/.dev_tunnel && \
-    chown -R tunnel:tunnel /home/tunnel/.dev_tunnel && \
-    chown -R tunnel:tunnel /app
-
-USER tunnel
+RUN mkdir -p /root/.dev_tunnel && chmod 700 /root/.dev_tunnel
 
 CMD ["tail", "-f", "/dev/null"]
 
@@ -49,20 +37,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sshpass \
     && rm -rf /var/lib/apt/lists/*
 
-# ─── Usuário não-root ─────────────────────────────────────────────
-RUN groupadd --gid 1000 tunnel && \
-    useradd --uid 1000 --gid tunnel --shell /bin/bash --create-home tunnel
-
 COPY . .
 
 RUN pip install --no-cache-dir .
 
-# Diretório de dados pertencente ao usuário tunnel
-RUN mkdir -p /home/tunnel/.dev_tunnel && \
-    chmod 700 /home/tunnel/.dev_tunnel && \
-    chown -R tunnel:tunnel /home/tunnel/.dev_tunnel && \
-    chown -R tunnel:tunnel /app
-
-USER tunnel
+RUN mkdir -p /root/.dev_tunnel && chmod 700 /root/.dev_tunnel
 
 ENTRYPOINT ["tunnel"]
