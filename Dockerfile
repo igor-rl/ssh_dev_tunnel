@@ -15,23 +15,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sshpass \
     && rm -rf /var/lib/apt/lists/*
 
-# Criação do usuário 'tunnel'
+# 1. Criação do usuário 'tunnel' para evitar o uso de ROOT
+# Usamos o ID 1000 que é o padrão do primeiro usuário no WSL/Linux
 RUN groupadd -g 1000 tunnel && \
     useradd -u 1000 -g tunnel -m -s /bin/bash tunnel
 
-# Prepara os diretórios de configuração
+# 2. Prepara os diretórios com as permissões corretas
 RUN mkdir -p /home/tunnel/.dev_tunnel && \
     chown -R tunnel:tunnel /home/tunnel/.dev_tunnel && \
     chmod 700 /home/tunnel/.dev_tunnel
 
-# Copia o código para dentro da imagem
 COPY --chown=tunnel:tunnel . .
 
-# Instala o pacote (isso cria o executável 'tunnel' no PATH)
 RUN pip install --no-cache-dir .
 
 # Muda para o usuário não-root
 USER tunnel
 
-# O ENTRYPOINT chama o binário instalado pelo pip install .
+# O script agora usará /home/tunnel/.dev_tunnel como BASE_DIR
 ENTRYPOINT ["tunnel"]
