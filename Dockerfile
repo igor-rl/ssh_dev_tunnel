@@ -15,12 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sshpass \
     && rm -rf /var/lib/apt/lists/*
 
-# 1. Criação do usuário 'tunnel' para evitar o uso de ROOT
-# Usamos o ID 1000 que é o padrão do primeiro usuário no WSL/Linux
+# Criação do usuário 'tunnel' (ID 1000 para bater com WSL/Linux)
 RUN groupadd -g 1000 tunnel && \
     useradd -u 1000 -g tunnel -m -s /bin/bash tunnel
 
-# 2. Prepara os diretórios com as permissões corretas
+# Prepara os diretórios. 
+# IMPORTANTE: O script de instalação usa /root/.dev_tunnel no volume, 
+# mas como o usuário é 'tunnel', vamos ajustar para o HOME dele.
 RUN mkdir -p /home/tunnel/.dev_tunnel && \
     chown -R tunnel:tunnel /home/tunnel/.dev_tunnel && \
     chmod 700 /home/tunnel/.dev_tunnel
@@ -32,5 +33,5 @@ RUN pip install --no-cache-dir .
 # Muda para o usuário não-root
 USER tunnel
 
-# O script agora usará /home/tunnel/.dev_tunnel como BASE_DIR
-ENTRYPOINT ["tunnel"]
+# Usamos CMD em vez de ENTRYPOINT para dar flexibilidade ao seu script de instalação
+CMD ["python3", "/app/main.py"]
