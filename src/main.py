@@ -62,8 +62,8 @@ if IS_DOCKER and _app_writable:
     _HOST_PREFIX = "/app"
 else:
     # docker run standalone: volume monta config em /home/tunnel/.dev_tunnel
-    BASE_DIR     = "/app/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
-    _HOST_PREFIX = "/app/.dev_tunnel"
+    BASE_DIR     = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
+    _HOST_PREFIX = "/home/tunnel/.dev_tunnel"
 
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
