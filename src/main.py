@@ -10,7 +10,7 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.21"
+__version__ = "3.6.22"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -37,10 +37,18 @@ W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Detecção de Ambiente ───────────────────────────────────────
-IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
-# No Docker o volume monta o projeto em /app, então .dev_tunnel fica em /app/.dev_tunnel
-# — exatamente como no original, acessível pelo host via ${PWD}/.dev_tunnel
-BASE_DIR    = "/app/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
+IS_DOCKER = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
+
+# HOST_PROJECT_PATH é injetado pelo `docker run -e HOST_PROJECT_PATH="$(pwd)"`.
+# É o caminho real no host (WSL) onde o editor vai procurar os arquivos.
+# Dentro do container os dados ficam em /home/tunnel/.dev_tunnel (ponto de montagem do volume).
+# Para o editor, substituímos /home/tunnel/.dev_tunnel pelo caminho equivalente no host:
+#   ~/.dev_tunnel_config  (pois o volume é: -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel)
+HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "")
+HOST_DATA_DIR     = os.path.expanduser("~/.dev_tunnel_config") if not HOST_PROJECT_PATH else \
+                    os.path.join(HOST_PROJECT_PATH.rstrip("/"), ".dev_tunnel_config")
+
+BASE_DIR    = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
 VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
@@ -204,6 +212,16 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
     return local_dest, chosen
 
+# ─── Converte caminho interno do container para caminho do host ──
+def to_host_path(container_path: str) -> str:
+    """
+    Troca o prefixo /home/tunnel/.dev_tunnel pelo caminho equivalente
+    no host onde o volume está montado (~/.dev_tunnel_config).
+    """
+    if IS_DOCKER:
+        return container_path.replace(BASE_DIR, HOST_DATA_DIR)
+    return container_path
+
 # ─── Main ───────────────────────────────────────────────────────
 def main():
     config = {"jump_hosts": [], "servers": [], "pem_by_server": {}}
@@ -280,11 +298,9 @@ def main():
         time.sleep(2)
 
     # 5. Workspace
-    # HOST_PROJECT_PATH = ${PWD} do host (ex: /home/igor/projects/ssh_dev_tunnel)
-    # Dentro do container tudo está em /app → substituímos /app pelo caminho real do host
-    # para que o editor abra o arquivo pelo caminho correto no WSL/host.
-    host_base       = os.environ.get("HOST_PROJECT_PATH", ".")
-    pem_path_for_vs = local_pem.replace("/app", host_base) if IS_DOCKER else local_pem
+    # pem_path_for_vs e display_path usam o caminho do HOST (não do container)
+    # para que o editor consiga abrir os arquivos corretamente.
+    pem_path_for_vs = to_host_path(local_pem)
 
     ws_dir  = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
@@ -306,10 +322,7 @@ def main():
     with open(ws_file, "w") as f:
         json.dump(ws_data, f, indent=4)
 
-    display_path = (
-        os.path.abspath(ws_file).replace("/app", host_base)
-        if IS_DOCKER else os.path.abspath(ws_file)
-    )
+    display_path = to_host_path(os.path.abspath(ws_file))
 
     draw_header(f"{jump['user']}@{jump['host']}", server)
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")

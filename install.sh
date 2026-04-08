@@ -12,7 +12,6 @@ DIVIDER='\033[38;5;238m'
 NC='\033[0m'
 BOLD='\033[1m'
 
-# ─── Layout ──────────────────────────────────────────────────────
 W="─────────────────────────────────────────────────────────────────"
 DIV="${DIVIDER}${W}${NC}"
 
@@ -29,32 +28,26 @@ err()  { echo -e "  ${ERROR}✘  $1${NC}"; }
 warn() { echo -e "  ${WARN}⚠  $1${NC}"; }
 info() { echo -e "  ${DIM}$1${NC}"; }
 
-# ─── Configurações ───────────────────────────────────────────────
 REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
 IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
 
-# ─── Limpa buffer de input residual ──────────────────────────────
 while read -r -t 0; do read -r; done
 
-# ─── Detectar Perfil do Shell ────────────────────────────────────
 if [ -n "$ZSH_VERSION" ]; then PROFILE="$HOME/.zshrc"
 else PROFILE="$HOME/.bashrc"; fi
 touch "$PROFILE"
 
-# ─── Detectar Dependências ───────────────────────────────────────
 HAS_DOCKER=false
 HAS_PYTHON=false
 command -v docker  &>/dev/null && HAS_DOCKER=true
 command -v python3 &>/dev/null && HAS_PYTHON=true
 
-# ─── Montar Opções ───────────────────────────────────────────────
 options=()
 [ "$HAS_DOCKER" = true ] && options+=("Docker  ${DIM}(Recomendado — isolado, sem dependências)${NC}")
 [ "$HAS_PYTHON" = true ] && options+=("Python  ${DIM}(Local — requer sshpass instalado)${NC}")
 options+=("Desinstalar")
 options+=("Sair")
 
-# ─── Menu Interativo ─────────────────────────────────────────────
 selected=0
 
 draw_menu() {
@@ -84,9 +77,7 @@ done
 
 CHOICE="${options[$selected]}"
 
-# ════════════════════════════════════════════════════════════════
-# ─── Sentinelas ─────────────────────────────────────────────────
-# ════════════════════════════════════════════════════════════════
+# ─── Sentinelas ──────────────────────────────────────────────────
 SENTINEL_BEGIN="# >>> ssh_dev_tunnel begin <<<"
 SENTINEL_END="# >>> ssh_dev_tunnel end <<<"
 
@@ -100,7 +91,6 @@ remove_tunnel_block() {
       sed -i "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
     fi
   else
-    # fallback para instalações legadas sem sentinelas
     if [[ "$OSTYPE" == "darwin"* ]]; then
       sed -i '' '/alias tunnel=/d' "$profile" 2>/dev/null
     else
@@ -117,8 +107,6 @@ PYEOF
 }
 
 # ════════════════════════════════════════════════════════════════
-# ─── Docker ─────────────────────────────────────────────────────
-# ════════════════════════════════════════════════════════════════
 if [[ "$CHOICE" == *"Docker"* ]]; then
 
   header "Docker"
@@ -128,7 +116,6 @@ if [[ "$CHOICE" == *"Docker"* ]]; then
   remove_tunnel_block "$PROFILE"
 
   if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    # ── Windows / Git Bash ──────────────────────────────────────
     cat >> "$PROFILE" << 'SHELLBLOCK'
 # >>> ssh_dev_tunnel begin <<<
 tunnel() {
@@ -143,21 +130,19 @@ tunnel() {
     echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
     return 1
   fi
+  # Garante que o diretório de dados exista com o dono correto ANTES do docker run.
+  # Se o Docker criar o diretório, ele fica como root e o uid 1000 não consegue escrever.
   mkdir -p ~/.dev_tunnel_config
   winpty docker run -it --rm --pull always \
     -p "${PORT}:${PORT}" \
     -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$(cygpath -m "$(pwd)")" \
+    -e HOST_PROJECT_PATH="$(cygpath -m "$HOME")/.dev_tunnel_config" \
     ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
 }
 # >>> ssh_dev_tunnel end <<<
 SHELLBLOCK
 
   else
-    # ── Linux / macOS / WSL ─────────────────────────────────────
-    # IMPORTANTE: mkdir + chmod 700 ANTES do docker run.
-    # Se o Docker criar o diretório do volume, ele pertence ao root,
-    # e o usuário 'tunnel' (uid 1000) não consegue escrever dentro.
     cat >> "$PROFILE" << 'SHELLBLOCK'
 # >>> ssh_dev_tunnel begin <<<
 tunnel() {
@@ -172,12 +157,13 @@ tunnel() {
     echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
     return 1
   fi
+  # Garante que o diretório de dados exista com o dono correto ANTES do docker run.
+  # Se o Docker criar o diretório, ele fica como root e o uid 1000 não consegue escrever.
   mkdir -p ~/.dev_tunnel_config
-  chmod 700 ~/.dev_tunnel_config
   docker run -it --rm --pull always \
     -p "${PORT}:${PORT}" \
     -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$(pwd)" \
+    -e HOST_PROJECT_PATH="$HOME/.dev_tunnel_config" \
     ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
 }
 # >>> ssh_dev_tunnel end <<<
@@ -186,8 +172,6 @@ SHELLBLOCK
 
   ok "Função 'tunnel' adicionada em $PROFILE"
 
-# ════════════════════════════════════════════════════════════════
-# ─── Python Local ───────────────────────────────────────────────
 # ════════════════════════════════════════════════════════════════
 elif [[ "$CHOICE" == *"Python"* ]]; then
 
@@ -211,8 +195,6 @@ elif [[ "$CHOICE" == *"Python"* ]]; then
   ok "Instalação local concluída."
 
 # ════════════════════════════════════════════════════════════════
-# ─── Desinstalar ────────────────────────────────────────────────
-# ════════════════════════════════════════════════════════════════
 elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
 
   header "Desinstalação"
@@ -235,7 +217,7 @@ elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
   fi
 
   echo ""
-  warn "Recarregue o terminal para que 'tunnel' deixe de funcionar:"
+  warn "Recarregue o terminal:"
   echo -e "       ${ACCENT}exec \$SHELL${NC}\n"
   exit 0
 
@@ -251,7 +233,7 @@ echo -e "  ${LABEL}1.${NC}  Recarregue o terminal:"
 echo -e "       ${ACCENT}source $PROFILE${NC}\n"
 echo -e "  ${LABEL}2.${NC}  Uso padrão (porta 2222 ou próxima livre):"
 echo -e "       ${ACCENT}tunnel${NC}\n"
-echo -e "  ${LABEL}3.${NC}  Especificar porta (próxima livre se ocupada):"
+echo -e "  ${LABEL}3.${NC}  Especificar porta:"
 echo -e "       ${ACCENT}tunnel --port 2223${NC}"
 echo -e "       ${ACCENT}tunnel -p 2224${NC}\n"
 echo -e "  ${WARN}⚠ Certifique-se de instalar a extensão SSH FS no Cursor/Code.${NC}"
