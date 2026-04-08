@@ -10,7 +10,7 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.20"
+__version__ = "3.6.21"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -38,7 +38,9 @@ DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Detecção de Ambiente ───────────────────────────────────────
 IS_DOCKER   = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
-BASE_DIR    = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
+# No Docker o volume monta o projeto em /app, então .dev_tunnel fica em /app/.dev_tunnel
+# — exatamente como no original, acessível pelo host via ${PWD}/.dev_tunnel
+BASE_DIR    = "/app/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
 VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
@@ -90,19 +92,16 @@ def get_secret(key):
 
 # ─── Saída limpa ────────────────────────────────────────────────
 def abort(msg="Cancelado."):
-    """Encerra o programa com uma mensagem amigável, sem traceback."""
     print(f"\n\n  {C.DIM}{msg}{C.RESET}\n")
     sys.exit(0)
 
 def safe_input(prompt):
-    """input() que converte Ctrl+C em saída limpa."""
     try:
         return input(prompt)
     except KeyboardInterrupt:
         abort()
 
 def safe_getpass(prompt):
-    """getpass() que converte Ctrl+C em saída limpa."""
     try:
         return getpass.getpass(prompt)
     except KeyboardInterrupt:
@@ -115,7 +114,6 @@ def getch():
     try:
         tty.setraw(fd)
         ch = sys.stdin.read(1)
-        # Ctrl+C em modo raw chega como \x03
         if ch == '\x03':
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
             abort()
@@ -282,18 +280,21 @@ def main():
         time.sleep(2)
 
     # 5. Workspace
+    # HOST_PROJECT_PATH = ${PWD} do host (ex: /home/igor/projects/ssh_dev_tunnel)
+    # Dentro do container tudo está em /app → substituímos /app pelo caminho real do host
+    # para que o editor abra o arquivo pelo caminho correto no WSL/host.
     host_base       = os.environ.get("HOST_PROJECT_PATH", ".")
-    pem_path_for_vs = local_pem.replace("/home/tunnel", host_base) if IS_DOCKER else local_pem
+    pem_path_for_vs = local_pem.replace("/app", host_base) if IS_DOCKER else local_pem
 
     ws_dir  = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
-    ws_file = os.path.join(ws_dir, f"{server['alias']}_p{TUNNEL_PORT}.code-workspace")
+    ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
 
     ws_data = {
         "folders": [],
         "settings": {
             "sshfs.configs": [{
-                "name":           f"{server['alias']} (:{TUNNEL_PORT})",
+                "name":           server["alias"],
                 "host":           "127.0.0.1",
                 "port":           TUNNEL_PORT,
                 "username":       server["user"],
@@ -302,10 +303,11 @@ def main():
             }]
         }
     }
-    with open(ws_file, "w") as f: json.dump(ws_data, f, indent=4)
+    with open(ws_file, "w") as f:
+        json.dump(ws_data, f, indent=4)
 
     display_path = (
-        os.path.abspath(ws_file).replace("/home/tunnel", host_base)
+        os.path.abspath(ws_file).replace("/app", host_base)
         if IS_DOCKER else os.path.abspath(ws_file)
     )
 
@@ -325,9 +327,6 @@ def main():
             tunnel.terminate()
 
 if __name__ == "__main__":
-    # KeyboardInterrupt no nível mais alto (ex: durante menus raw)
-    # já é tratado dentro de getch() e abort().
-    # Este handler é o último recurso para qualquer ponto não coberto.
     try:
         main()
     except KeyboardInterrupt:
