@@ -10,7 +10,7 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.19"
+__version__ = "3.6.20"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -51,7 +51,6 @@ for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
 
 # ─── Porta: escolhe a primeira livre a partir da preferencial ───
 def find_available_port(preferred: int, max_attempts: int = 20) -> int:
-    """Retorna a primeira porta >= preferred que não esteja em uso."""
     for offset in range(max_attempts):
         port = preferred + offset
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -89,13 +88,41 @@ def get_secret(key):
     except: pass
     return None
 
+# ─── Saída limpa ────────────────────────────────────────────────
+def abort(msg="Cancelado."):
+    """Encerra o programa com uma mensagem amigável, sem traceback."""
+    print(f"\n\n  {C.DIM}{msg}{C.RESET}\n")
+    sys.exit(0)
+
+def safe_input(prompt):
+    """input() que converte Ctrl+C em saída limpa."""
+    try:
+        return input(prompt)
+    except KeyboardInterrupt:
+        abort()
+
+def safe_getpass(prompt):
+    """getpass() que converte Ctrl+C em saída limpa."""
+    try:
+        return getpass.getpass(prompt)
+    except KeyboardInterrupt:
+        abort()
+
 # ─── Helpers ────────────────────────────────────────────────────
 def getch():
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        return sys.stdin.read(1)
+        ch = sys.stdin.read(1)
+        # Ctrl+C em modo raw chega como \x03
+        if ch == '\x03':
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            abort()
+        return ch
+    except KeyboardInterrupt:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        abort()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
@@ -140,7 +167,7 @@ def interactive_menu(options, title, breadcrumb="", footer_hint=None):
             if arrow == 'A': idx = (idx - 1) % len(options)
             elif arrow == 'B': idx = (idx + 1) % len(options)
         elif ch in ('\r', '\n'): return idx
-        elif ch.lower() == 'q': sys.exit(0)
+        elif ch.lower() == 'q': abort()
 
 # ─── PEM Management ─────────────────────────────────────────────
 def choose_pem_for_server(jump, password, server, config, breadcrumb):
@@ -165,7 +192,7 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
         sys.exit(1)
 
     idx = interactive_menu(remote_keys, f"Chave para {server['alias']}", breadcrumb)
-    chosen    = remote_keys[idx]
+    chosen     = remote_keys[idx]
     local_dest = os.path.join(LOCAL_SSH, chosen)
 
     subprocess.run([
@@ -193,8 +220,11 @@ def main():
 
     if idx == len(j_opts) - 1:
         draw_header("Novo Jump Host")
-        entry = input(f"\n  {C.LABEL}User@Host:{C.RESET}  ").strip()
-        u, h = entry.split("@")
+        entry = safe_input(f"\n  {C.LABEL}User@Host:{C.RESET}  ").strip()
+        if "@" not in entry:
+            print(f"\n  {C.ERROR}Formato inválido. Use user@host{C.RESET}\n")
+            sys.exit(1)
+        u, h = entry.split("@", 1)
         jump = {"host": h, "user": u}
         config["jump_hosts"].append(jump)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
@@ -209,7 +239,7 @@ def main():
         print(f"  {C.SUCCESS}✔  Senha recuperada do vault local.{C.RESET}")
     else:
         draw_header(f"{jump['user']}@{jump['host']}")
-        session_pw = getpass.getpass(f"\n  {C.WARN}Senha {jump['user']}@{jump['host']}:{C.RESET}  ")
+        session_pw = safe_getpass(f"\n  {C.WARN}Senha {jump['user']}@{jump['host']}:{C.RESET}  ")
         print(f"\n  {C.BOLD}Salvar senha codificada?{C.RESET} {C.DIM}(arquivo .vault){C.RESET}")
         print(f"  {C.ACCENT}▶  S  Sim / N  Não{C.RESET}")
         if getch().lower() == 's':
@@ -223,9 +253,13 @@ def main():
 
     if idx == len(s_opts) - 1:
         draw_header("Novo Servidor")
-        alias = input(f"\n  {C.LABEL}Alias:{C.RESET}  ").strip()
-        u, h  = input(f"  {C.LABEL}User@IP:{C.RESET}  ").strip().split("@")
-        path  = input(f"  {C.LABEL}Path Remoto:{C.RESET}  ").strip()
+        alias = safe_input(f"\n  {C.LABEL}Alias:{C.RESET}  ").strip()
+        raw   = safe_input(f"  {C.LABEL}User@IP:{C.RESET}  ").strip()
+        if "@" not in raw:
+            print(f"\n  {C.ERROR}Formato inválido. Use user@ip{C.RESET}\n")
+            sys.exit(1)
+        u, h  = raw.split("@", 1)
+        path  = safe_input(f"  {C.LABEL}Path Remoto:{C.RESET}  ").strip()
         server = {"alias": alias, "host": h, "user": u, "root": path}
         config["servers"].append(server)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
@@ -235,7 +269,6 @@ def main():
     # 4. PEM e Túnel
     local_pem, pem_name = choose_pem_for_server(jump, session_pw, server, config, jump['host'])
 
-    # TUNNEL_PORT já é a porta livre escolhida no início — só abre se ainda não estiver ativa
     tunnel = "existing"
     if not is_port_open(TUNNEL_PORT):
         cmd = [
@@ -286,11 +319,17 @@ def main():
     print(f"\n{DIV}")
 
     try:
-        input(f"\n  {C.WARN}Pressione ENTER para encerrar...{C.RESET}")
+        safe_input(f"\n  {C.WARN}Pressione ENTER para encerrar...{C.RESET}")
     finally:
         if isinstance(tunnel, subprocess.Popen):
             tunnel.terminate()
 
 if __name__ == "__main__":
-    try: main()
-    except KeyboardInterrupt: sys.exit(0)
+    # KeyboardInterrupt no nível mais alto (ex: durante menus raw)
+    # já é tratado dentro de getch() e abort().
+    # Este handler é o último recurso para qualquer ponto não coberto.
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(f"\n\n  {C.DIM}Cancelado.{C.RESET}\n")
+        sys.exit(0)

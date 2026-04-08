@@ -1,6 +1,5 @@
 # ─── Estágio de Produção ───────────────────────────────────────
 FROM python:3.12-slim AS production
-
 LABEL org.opencontainers.image.authors="Igor Lage"
 LABEL org.opencontainers.image.description="SSH Dev Tunnel CLI - Precifica"
 
@@ -9,28 +8,26 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Instala dependências
+# Instala dependências do sistema
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     sshpass \
     && rm -rf /var/lib/apt/lists/*
 
-# 1. Criação do usuário 'tunnel' para evitar o uso de ROOT
-# Usamos o ID 1000 que é o padrão do primeiro usuário no WSL/Linux
+# Cria o usuário 'tunnel' (uid/gid 1000 — padrão WSL/Linux)
 RUN groupadd -g 1000 tunnel && \
     useradd -u 1000 -g tunnel -m -s /bin/bash tunnel
 
-# 2. Prepara os diretórios com as permissões corretas
-RUN mkdir -p /home/tunnel/.dev_tunnel && \
-    chown -R tunnel:tunnel /home/tunnel/.dev_tunnel && \
-    chmod 700 /home/tunnel/.dev_tunnel
-
+# Copia e instala o pacote Python
 COPY --chown=tunnel:tunnel . .
-
 RUN pip install --no-cache-dir .
 
-# Muda para o usuário não-root
+# NÃO criamos /home/tunnel/.dev_tunnel aqui.
+# Esse diretório será montado via volume pelo host (-v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel).
+# Se o Docker criasse o diretório com root antes da montagem, o uid 1000
+# não teria permissão de escrita — causando PermissionError no Python.
+# O host garante mkdir + chmod 700 antes de subir o container (ver install.sh).
+
 USER tunnel
 
-# O script agora usará /home/tunnel/.dev_tunnel como BASE_DIR
 ENTRYPOINT ["tunnel"]

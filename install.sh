@@ -85,84 +85,35 @@ done
 CHOICE="${options[$selected]}"
 
 # ════════════════════════════════════════════════════════════════
-# ─── Função de limpeza robusta do profile ───────────────────────
-# Marca o bloco com comentários sentinela para remoção precisa.
+# ─── Sentinelas ─────────────────────────────────────────────────
 # ════════════════════════════════════════════════════════════════
 SENTINEL_BEGIN="# >>> ssh_dev_tunnel begin <<<"
 SENTINEL_END="# >>> ssh_dev_tunnel end <<<"
 
 remove_tunnel_block() {
   local profile="$1"
-  if grep -q "$SENTINEL_BEGIN" "$profile" 2>/dev/null; then
-    # Remove o bloco entre as sentinelas (inclusive) em qualquer OS
+  [ -f "$profile" ] || return
+  if grep -qF "$SENTINEL_BEGIN" "$profile" 2>/dev/null; then
     if [[ "$OSTYPE" == "darwin"* ]]; then
       sed -i '' "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
     else
       sed -i "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
     fi
-    ok "Bloco 'tunnel' removido de $profile"
   else
-    # Fallback: tenta remover vestígios antigos sem sentinelas
+    # fallback para instalações legadas sem sentinelas
     if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^tunnel() {/,/^}/d' "$profile" 2>/dev/null
-      sed -i '' '/^alias tunnel=/d'   "$profile" 2>/dev/null
+      sed -i '' '/alias tunnel=/d' "$profile" 2>/dev/null
     else
-      sed -i '/^tunnel() {/,/^}/d' "$profile" 2>/dev/null
-      sed -i '/^alias tunnel=/d'   "$profile" 2>/dev/null
+      sed -i '/alias tunnel=/d' "$profile" 2>/dev/null
     fi
-    warn "Sentinelas não encontradas — tentativa de limpeza manual aplicada."
+    python3 - "$profile" <<'PYEOF' 2>/dev/null
+import sys, re
+path = sys.argv[1]
+with open(path, 'r') as f: content = f.read()
+cleaned = re.sub(r'\ntunnel\(\) \{[^}]*\}', '', content, flags=re.DOTALL)
+with open(path, 'w') as f: f.write(cleaned)
+PYEOF
   fi
-}
-
-write_tunnel_block() {
-  local profile="$1"
-  # Remove bloco anterior antes de reescrever
-  remove_tunnel_block "$profile"
-
-  cat >> "$profile" << 'SHELLBLOCK'
-# >>> ssh_dev_tunnel begin <<<
-tunnel() {
-  local PORT=2222
-  # Suporta: tunnel, tunnel --port 2223, tunnel -p 2223
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port|-p) PORT="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-
-  if [ "$(pwd)" = "$HOME" ]; then
-    echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
-    return 1
-  fi
-
-SHELLBLOCK
-
-  # A parte com variáveis do shell do instalador (não heredoc literal)
-  {
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-      cat >> "$profile" << 'SHELLBLOCK'
-  winpty docker run -it --rm --pull always \
-    -p "${PORT}:${PORT}" \
-    -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$(cygpath -m "$(pwd)")" \
-    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
-SHELLBLOCK
-    else
-      cat >> "$profile" << 'SHELLBLOCK'
-  docker run -it --rm --pull always \
-    -p "${PORT}:${PORT}" \
-    -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$(pwd)" \
-    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
-SHELLBLOCK
-    fi
-  }
-
-  cat >> "$profile" << 'SHELLBLOCK'
-}
-# >>> ssh_dev_tunnel end <<<
-SHELLBLOCK
 }
 
 # ════════════════════════════════════════════════════════════════
@@ -174,7 +125,65 @@ if [[ "$CHOICE" == *"Docker"* ]]; then
   echo ""
   info "Configurando atalho via Docker com suporte a múltiplas portas..."
 
-  write_tunnel_block "$PROFILE"
+  remove_tunnel_block "$PROFILE"
+
+  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    # ── Windows / Git Bash ──────────────────────────────────────
+    cat >> "$PROFILE" << 'SHELLBLOCK'
+# >>> ssh_dev_tunnel begin <<<
+tunnel() {
+  local PORT=2222
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|-p) PORT="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$(pwd)" = "$HOME" ]; then
+    echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
+    return 1
+  fi
+  mkdir -p ~/.dev_tunnel_config
+  winpty docker run -it --rm --pull always \
+    -p "${PORT}:${PORT}" \
+    -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
+    -e HOST_PROJECT_PATH="$(cygpath -m "$(pwd)")" \
+    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
+}
+# >>> ssh_dev_tunnel end <<<
+SHELLBLOCK
+
+  else
+    # ── Linux / macOS / WSL ─────────────────────────────────────
+    # IMPORTANTE: mkdir + chmod 700 ANTES do docker run.
+    # Se o Docker criar o diretório do volume, ele pertence ao root,
+    # e o usuário 'tunnel' (uid 1000) não consegue escrever dentro.
+    cat >> "$PROFILE" << 'SHELLBLOCK'
+# >>> ssh_dev_tunnel begin <<<
+tunnel() {
+  local PORT=2222
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|-p) PORT="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$(pwd)" = "$HOME" ]; then
+    echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
+    return 1
+  fi
+  mkdir -p ~/.dev_tunnel_config
+  chmod 700 ~/.dev_tunnel_config
+  docker run -it --rm --pull always \
+    -p "${PORT}:${PORT}" \
+    -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
+    -e HOST_PROJECT_PATH="$(pwd)" \
+    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
+}
+# >>> ssh_dev_tunnel end <<<
+SHELLBLOCK
+  fi
+
   ok "Função 'tunnel' adicionada em $PROFILE"
 
 # ════════════════════════════════════════════════════════════════
@@ -209,22 +218,16 @@ elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
   header "Desinstalação"
   echo ""
 
-  # Remove bloco do profile ativo
-  remove_tunnel_block "$PROFILE"
-
-  # Garante limpeza em ambos os profiles caso o usuário tenha trocado de shell
-  for alt in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-    [ "$alt" != "$PROFILE" ] && [ -f "$alt" ] && remove_tunnel_block "$alt"
+  for prof in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+    remove_tunnel_block "$prof"
   done
 
-  # Remove pip local (Python)
   if command -v pip3 &>/dev/null; then
     pip3 uninstall -y ssh-dev-tunnel 2>/dev/null \
       && ok "Pacote Python removido." \
-      || info "Pacote Python não encontrado via pip."
+      || info "Pacote pip não encontrado."
   fi
 
-  # Remove dados locais (cofre, chaves, workspaces)
   CONFIG_BASE="$HOME/.dev_tunnel_config"
   if [ -d "$CONFIG_BASE" ]; then
     rm -rf "$CONFIG_BASE"
@@ -236,7 +239,6 @@ elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
   echo -e "       ${ACCENT}exec \$SHELL${NC}\n"
   exit 0
 
-# ════════════════════════════════════════════════════════════════
 else
   echo -e "\n  ${DIM}Instalação cancelada.${NC}\n"
   exit 0
