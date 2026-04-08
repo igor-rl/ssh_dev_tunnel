@@ -10,7 +10,7 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.22"
+__version__ = "3.6.23"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -37,18 +37,34 @@ W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Detecção de Ambiente ───────────────────────────────────────
-IS_DOCKER = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
-
-# HOST_PROJECT_PATH é injetado pelo `docker run -e HOST_PROJECT_PATH="$(pwd)"`.
-# É o caminho real no host (WSL) onde o editor vai procurar os arquivos.
-# Dentro do container os dados ficam em /home/tunnel/.dev_tunnel (ponto de montagem do volume).
-# Para o editor, substituímos /home/tunnel/.dev_tunnel pelo caminho equivalente no host:
-#   ~/.dev_tunnel_config  (pois o volume é: -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel)
+IS_DOCKER        = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
 HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "")
-HOST_DATA_DIR     = os.path.expanduser("~/.dev_tunnel_config") if not HOST_PROJECT_PATH else \
-                    os.path.join(HOST_PROJECT_PATH.rstrip("/"), ".dev_tunnel_config")
 
-BASE_DIR    = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
+# Dois modos de execução Docker:
+#
+# 1) docker-compose  →  volume ./:/app
+#                        HOST_PROJECT_PATH = ${PWD} (pasta do projeto)
+#                        dados ficam em /app/.dev_tunnel  (dentro do volume)
+#                        replace: /app  →  HOST_PROJECT_PATH
+#
+# 2) docker run      →  volume ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel
+#                        HOST_PROJECT_PATH = $HOME/.dev_tunnel_config
+#                        dados ficam em /home/tunnel/.dev_tunnel
+#                        replace: /home/tunnel/.dev_tunnel  →  HOST_PROJECT_PATH
+#
+# Distinguimos pelos dois casos checando se /app existe e é gravável pelo processo.
+
+_app_writable = os.path.isdir("/app") and os.access("/app", os.W_OK)
+
+if IS_DOCKER and _app_writable:
+    # docker-compose: volume monta o projeto em /app
+    BASE_DIR     = "/app/.dev_tunnel"
+    _HOST_PREFIX = "/app"
+else:
+    # docker run standalone: volume monta config em /home/tunnel/.dev_tunnel
+    BASE_DIR     = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
+    _HOST_PREFIX = "/home/tunnel/.dev_tunnel"
+
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
 VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
@@ -58,6 +74,12 @@ LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
 for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
     if not os.path.exists(d):
         os.makedirs(d, mode=0o700, exist_ok=True)
+
+# ─── Converte caminho interno → caminho no host ─────────────────
+def to_host_path(container_path: str) -> str:
+    if IS_DOCKER and HOST_PROJECT_PATH:
+        return container_path.replace(_HOST_PREFIX, HOST_PROJECT_PATH.rstrip("/"))
+    return container_path
 
 # ─── Porta: escolhe a primeira livre a partir da preferencial ───
 def find_available_port(preferred: int, max_attempts: int = 20) -> int:
@@ -212,16 +234,6 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
     return local_dest, chosen
 
-# ─── Converte caminho interno do container para caminho do host ──
-def to_host_path(container_path: str) -> str:
-    """
-    Troca o prefixo /home/tunnel/.dev_tunnel pelo caminho equivalente
-    no host onde o volume está montado (~/.dev_tunnel_config).
-    """
-    if IS_DOCKER:
-        return container_path.replace(BASE_DIR, HOST_DATA_DIR)
-    return container_path
-
 # ─── Main ───────────────────────────────────────────────────────
 def main():
     config = {"jump_hosts": [], "servers": [], "pem_by_server": {}}
@@ -298,8 +310,6 @@ def main():
         time.sleep(2)
 
     # 5. Workspace
-    # pem_path_for_vs e display_path usam o caminho do HOST (não do container)
-    # para que o editor consiga abrir os arquivos corretamente.
     pem_path_for_vs = to_host_path(local_pem)
 
     ws_dir  = os.path.join(WS_ROOT, server["alias"])
