@@ -28,31 +28,31 @@ err()  { echo -e "  ${ERROR}✘  $1${NC}"; }
 warn() { echo -e "  ${WARN}⚠  $1${NC}"; }
 info() { echo -e "  ${DIM}$1${NC}"; }
 
-REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
 IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
+VOLUME_NAME="ssh_dev_tunnel_data"
 
+# ─── Limpa buffer de stdin ───────────────────────────────────────
 while read -r -t 0; do read -r; done
 
-if [ -n "$ZSH_VERSION" ]; then PROFILE="$HOME/.zshrc"
-else PROFILE="$HOME/.bashrc"; fi
-touch "$PROFILE"
+# ─── Verifica Docker obrigatório ─────────────────────────────────
+if ! command -v docker &>/dev/null; then
+  header "Erro"
+  echo ""
+  err "Docker não encontrado."
+  echo ""
+  info "Instale o Docker Desktop antes de continuar:"
+  info "  https://www.docker.com/products/docker-desktop"
+  echo ""
+  exit 1
+fi
 
-HAS_DOCKER=false
-HAS_PYTHON=false
-command -v docker  &>/dev/null && HAS_DOCKER=true
-command -v python3 &>/dev/null && HAS_PYTHON=true
-
-options=()
-[ "$HAS_DOCKER" = true ] && options+=("Docker  ${DIM}(Recomendado — isolado, sem dependências)${NC}")
-[ "$HAS_PYTHON" = true ] && options+=("Python  ${DIM}(Local — requer sshpass instalado)${NC}")
-options+=("Desinstalar")
-options+=("Sair")
-
+# ─── Menu ────────────────────────────────────────────────────────
+options=("Instalar" "Desinstalar" "Sair")
 selected=0
 
 draw_menu() {
   header "Método de Instalação"
-  echo -e "  ${BOLD}${INFO}Como deseja instalar a ferramenta?${NC}\n"
+  echo -e "  ${BOLD}${INFO}O que deseja fazer?${NC}\n"
   for i in "${!options[@]}"; do
     if [ "$i" -eq "$selected" ]; then
       echo -e "  ${ACCENT}▶  ${BOLD}${options[$i]}${NC}"
@@ -90,6 +90,7 @@ remove_tunnel_block() {
     else
       sed -i "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
     fi
+    ok "Bloco anterior removido de $(basename "$profile")"
   else
     if [[ "$OSTYPE" == "darwin"* ]]; then
       sed -i '' '/alias tunnel=/d' "$profile" 2>/dev/null
@@ -106,96 +107,108 @@ PYEOF
   fi
 }
 
+# ─── Bloco da função tunnel a ser injetado nos profiles ──────────
+# Usa volume Docker nomeado para persistência sem depender de dir local.
+build_tunnel_block_unix() {
+  cat << 'SHELLBLOCK'
+# >>> ssh_dev_tunnel begin <<<
+tunnel() {
+  local PORT=2222
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|-p) PORT="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  docker run -it --rm --pull always \
+    -p "${PORT}:${PORT}" \
+    -v ssh_dev_tunnel_data:/home/tunnel/.dev_tunnel \
+    -e HOST_PROJECT_PATH="/home/tunnel/.dev_tunnel" \
+    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
+}
+# >>> ssh_dev_tunnel end <<<
+SHELLBLOCK
+}
+
+build_tunnel_block_windows() {
+  cat << 'SHELLBLOCK'
+# >>> ssh_dev_tunnel begin <<<
+tunnel() {
+  local PORT=2222
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|-p) PORT="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  winpty docker run -it --rm --pull always \
+    -p "${PORT}:${PORT}" \
+    -v ssh_dev_tunnel_data:/home/tunnel/.dev_tunnel \
+    -e HOST_PROJECT_PATH="/home/tunnel/.dev_tunnel" \
+    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
+}
+# >>> ssh_dev_tunnel end <<<
+SHELLBLOCK
+}
+
+# ─── Escreve o bloco em um profile, criando-o se necessário ──────
+inject_into_profile() {
+  local profile="$1"
+  touch "$profile"
+  remove_tunnel_block "$profile"
+  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    build_tunnel_block_windows >> "$profile"
+  else
+    build_tunnel_block_unix >> "$profile"
+  fi
+  ok "Função 'tunnel' adicionada em $profile"
+}
+
 # ════════════════════════════════════════════════════════════════
-if [[ "$CHOICE" == *"Docker"* ]]; then
+if [[ "$CHOICE" == "Instalar" ]]; then
 
   header "Docker"
   echo ""
-  info "Configurando atalho via Docker com suporte a múltiplas portas..."
-
-  remove_tunnel_block "$PROFILE"
-
-  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    cat >> "$PROFILE" << 'SHELLBLOCK'
-# >>> ssh_dev_tunnel begin <<<
-tunnel() {
-  local PORT=2222
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port|-p) PORT="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  if [ "$(pwd)" = "$HOME" ]; then
-    echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
-    return 1
-  fi
-  # Garante que o diretório de dados exista com o dono correto ANTES do docker run.
-  # Se o Docker criar o diretório, ele fica como root e o uid 1000 não consegue escrever.
-  mkdir -p ~/.dev_tunnel_config
-  winpty docker run -it --rm --pull always \
-    -p "${PORT}:${PORT}" \
-    -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$(cygpath -m "$HOME")/.dev_tunnel_config" \
-    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
-}
-# >>> ssh_dev_tunnel end <<<
-SHELLBLOCK
-
-  else
-    cat >> "$PROFILE" << 'SHELLBLOCK'
-# >>> ssh_dev_tunnel begin <<<
-tunnel() {
-  local PORT=2222
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port|-p) PORT="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  if [ "$(pwd)" = "$HOME" ]; then
-    echo -e "\n  \033[38;5;196mErro:\033[0m Entre em uma pasta de projeto antes de rodar o tunnel.\n"
-    return 1
-  fi
-  # Garante que o diretório de dados exista com o dono correto ANTES do docker run.
-  # Se o Docker criar o diretório, ele fica como root e o uid 1000 não consegue escrever.
-  mkdir -p ~/.dev_tunnel_config
-  docker run -it --rm --pull always \
-    -p "${PORT}:${PORT}" \
-    -v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$HOME/.dev_tunnel_config" \
-    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
-}
-# >>> ssh_dev_tunnel end <<<
-SHELLBLOCK
-  fi
-
-  ok "Função 'tunnel' adicionada em $PROFILE"
-
-# ════════════════════════════════════════════════════════════════
-elif [[ "$CHOICE" == *"Python"* ]]; then
-
-  header "Python Local"
+  info "Usando volume Docker nomeado: ${VOLUME_NAME}"
+  info "Os dados persistem mesmo após 'docker rm'."
   echo ""
-  info "Instalando pacote via pip..."
 
-  PIP_CMD=$(command -v pip3 || command -v pip)
-  $PIP_CMD install --upgrade --user "git+$REPO_URL"
-
-  BIN_PATH=$(python3 -m site --user-base)/bin
-  if [[ ":$PATH:" != *":$BIN_PATH:"* ]]; then
-    {
-      echo "$SENTINEL_BEGIN"
-      echo "export PATH=\"\$PATH:$BIN_PATH\""
-      echo "$SENTINEL_END"
-    } >> "$PROFILE"
-    info "PATH atualizado em $PROFILE"
+  # Cria o volume nomeado caso não exista
+  if ! docker volume inspect "$VOLUME_NAME" &>/dev/null; then
+    docker volume create "$VOLUME_NAME" > /dev/null
+    ok "Volume Docker '${VOLUME_NAME}' criado."
+  else
+    ok "Volume Docker '${VOLUME_NAME}' já existe."
   fi
 
-  ok "Instalação local concluída."
+  # Injeta em todos os profiles de shell encontrados
+  PROFILES_WRITTEN=0
+
+  # .bashrc — presente em Linux e WSL
+  if [ -f "$HOME/.bashrc" ] || command -v bash &>/dev/null; then
+    inject_into_profile "$HOME/.bashrc"
+    PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
+  fi
+
+  # .zshrc — presente em Mac e WSL com zsh (ex: Oh My Zsh no Windows)
+  if [ -f "$HOME/.zshrc" ] || command -v zsh &>/dev/null; then
+    inject_into_profile "$HOME/.zshrc"
+    PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
+  fi
+
+  # .bash_profile — fallback para Mac sem .bashrc
+  if [[ "$OSTYPE" == "darwin"* ]] && [ ! -f "$HOME/.bashrc" ]; then
+    inject_into_profile "$HOME/.bash_profile"
+    PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
+  fi
+
+  if [ "$PROFILES_WRITTEN" -eq 0 ]; then
+    warn "Nenhum profile de shell detectado. Adicionando em ~/.bashrc como fallback."
+    inject_into_profile "$HOME/.bashrc"
+  fi
 
 # ════════════════════════════════════════════════════════════════
-elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
+elif [[ "$CHOICE" == "Desinstalar" ]]; then
 
   header "Desinstalação"
   echo ""
@@ -204,16 +217,18 @@ elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
     remove_tunnel_block "$prof"
   done
 
-  if command -v pip3 &>/dev/null; then
-    pip3 uninstall -y ssh-dev-tunnel 2>/dev/null \
-      && ok "Pacote Python removido." \
-      || info "Pacote pip não encontrado."
-  fi
-
-  CONFIG_BASE="$HOME/.dev_tunnel_config"
-  if [ -d "$CONFIG_BASE" ]; then
-    rm -rf "$CONFIG_BASE"
-    ok "Diretório $CONFIG_BASE removido."
+  echo ""
+  warn "Deseja apagar também o volume Docker com servidores e chaves PEM?"
+  echo -e "  ${DIM}Volume: ${VOLUME_NAME}${NC}\n"
+  echo -e "$DIV"
+  echo -e "  ${BOLD}${WARN}Apagar volume? (s/N)${NC}  \c"
+  read -r response </dev/tty
+  if [[ "$response" =~ ^([sS])$ ]]; then
+    docker volume rm "$VOLUME_NAME" 2>/dev/null \
+      && ok "Volume '${VOLUME_NAME}' removido." \
+      || warn "Volume não encontrado ou já removido."
+  else
+    info "Volume mantido: ${VOLUME_NAME}"
   fi
 
   echo ""
@@ -222,15 +237,16 @@ elif [[ "$CHOICE" == *"Desinstalar"* ]]; then
   exit 0
 
 else
-  echo -e "\n  ${DIM}Instalação cancelada.${NC}\n"
+  echo -e "\n  ${DIM}Cancelado.${NC}\n"
   exit 0
 fi
 
 # ─── Instruções Finais ───────────────────────────────────────────
 echo -e "\n$DIV"
 echo -e "\n  ${BOLD}${INFO}PRÓXIMOS PASSOS${NC}\n"
-echo -e "  ${LABEL}1.${NC}  Recarregue o terminal:"
-echo -e "       ${ACCENT}source $PROFILE${NC}\n"
+echo -e "  ${LABEL}1.${NC}  Recarregue o terminal (em cada shell ativo):"
+echo -e "       ${ACCENT}source ~/.bashrc${NC}   ${DIM}# bash / WSL${NC}"
+echo -e "       ${ACCENT}source ~/.zshrc${NC}    ${DIM}# zsh${NC}\n"
 echo -e "  ${LABEL}2.${NC}  Uso padrão (porta 2222 ou próxima livre):"
 echo -e "       ${ACCENT}tunnel${NC}\n"
 echo -e "  ${LABEL}3.${NC}  Especificar porta:"

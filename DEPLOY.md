@@ -1,6 +1,6 @@
 # Adiciona as mudanças e criar nova versao do pacote
 
 ```cmd
-git add . && git commit -m "v3.6.25: multiple tunnel"
-git push origin main && git tag v3.6.25 && git push origin v3.6.25
+git add . && git commit -m "v3.6.29: multiple tunnel"
+git push origin main && git tag v3.6.29 && git push origin v3.6.29
 ```
