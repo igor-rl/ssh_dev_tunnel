@@ -9,9 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Instala dependências do sistema
+# gosu: troca de usuário segura no entrypoint (sem sudo, sem setuid)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     sshpass \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Cria o usuário 'tunnel' (uid/gid 1000 — padrão WSL/Linux)
@@ -22,12 +24,12 @@ RUN groupadd -g 1000 tunnel && \
 COPY --chown=tunnel:tunnel . .
 RUN pip install --no-cache-dir .
 
-# NÃO criamos /home/tunnel/.dev_tunnel aqui.
-# Esse diretório será montado via volume pelo host (-v ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel).
-# Se o Docker criasse o diretório com root antes da montagem, o uid 1000
-# não teria permissão de escrita — causando PermissionError no Python.
-# O host garante mkdir + chmod 700 antes de subir o container (ver install.sh).
+# Copia e habilita o entrypoint (roda como root para corrigir permissões do volume)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-USER tunnel
+# O entrypoint roda como root, ajusta /home/tunnel/.dev_tunnel e faz exec como tunnel.
+# Isso resolve o PermissionError em volumes Docker nomeados (criados com dono root).
+USER root
 
-ENTRYPOINT ["tunnel"]
+ENTRYPOINT ["/entrypoint.sh"]

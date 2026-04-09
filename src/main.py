@@ -10,7 +10,7 @@ if os.geteuid() == 0:
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.29"
+__version__ = "3.6.30"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -37,31 +37,15 @@ W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Detecção de Ambiente ───────────────────────────────────────
-IS_DOCKER        = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
+IS_DOCKER         = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
 HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "")
-
-# Dois modos de execução Docker:
-#
-# 1) docker-compose  →  volume ./:/app
-#                        HOST_PROJECT_PATH = ${PWD} (pasta do projeto)
-#                        dados ficam em /app/.dev_tunnel  (dentro do volume)
-#                        replace: /app  →  HOST_PROJECT_PATH
-#
-# 2) docker run      →  volume ~/.dev_tunnel_config:/home/tunnel/.dev_tunnel
-#                        HOST_PROJECT_PATH = $HOME/.dev_tunnel_config
-#                        dados ficam em /home/tunnel/.dev_tunnel
-#                        replace: /home/tunnel/.dev_tunnel  →  HOST_PROJECT_PATH
-#
-# Distinguimos pelos dois casos checando se /app existe e é gravável pelo processo.
 
 _app_writable = os.path.isdir("/app") and os.access("/app", os.W_OK)
 
 if IS_DOCKER and _app_writable:
-    # docker-compose: volume monta o projeto em /app
     BASE_DIR     = "/app/.dev_tunnel"
     _HOST_PREFIX = "/app"
 else:
-    # docker run standalone: volume monta config em /home/tunnel/.dev_tunnel
     BASE_DIR     = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
     _HOST_PREFIX = "/home/tunnel/.dev_tunnel"
 
@@ -100,25 +84,46 @@ if TUNNEL_PORT != args.port:
     time.sleep(1)
 
 # ─── Simple Vault (Base64) ──────────────────────────────────────
-def save_secret(key, value):
-    vault = {}
-    if os.path.exists(VAULT_FILE):
-        try:
-            with open(VAULT_FILE, 'r') as f: vault = json.load(f)
-        except: pass
-    vault[key] = base64.b64encode(value.encode()).decode()
-    with open(VAULT_FILE, 'w') as f:
+def _load_vault() -> dict:
+    """Carrega o vault do disco. Retorna {} se não existir ou estiver corrompido."""
+    if not os.path.exists(VAULT_FILE):
+        return {}
+    try:
+        with open(VAULT_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_vault(vault: dict) -> None:
+    """Persiste o vault no disco com permissão restrita."""
+    # Garante que o diretório pai existe (importante no primeiro uso do volume)
+    os.makedirs(os.path.dirname(VAULT_FILE), mode=0o700, exist_ok=True)
+    tmp = VAULT_FILE + ".tmp"
+    with open(tmp, 'w') as f:
         json.dump(vault, f)
+    os.replace(tmp, VAULT_FILE)   # atômica — evita arquivo corrompido
     os.chmod(VAULT_FILE, 0o600)
 
-def get_secret(key):
-    if not os.path.exists(VAULT_FILE): return None
+def save_secret(key: str, value: str) -> None:
+    vault = _load_vault()
+    vault[key] = base64.b64encode(value.encode()).decode()
+    _save_vault(vault)
+
+def get_secret(key: str) -> str | None:
+    vault = _load_vault()
+    encoded = vault.get(key)
+    if encoded is None:
+        return None
     try:
-        with open(VAULT_FILE, 'r') as f: vault = json.load(f)
-        if key in vault:
-            return base64.b64decode(vault[key].encode()).decode()
-    except: pass
-    return None
+        return base64.b64decode(encoded.encode()).decode()
+    except Exception:
+        return None
+
+def delete_secret(key: str) -> None:
+    vault = _load_vault()
+    if key in vault:
+        del vault[key]
+        _save_vault(vault)
 
 # ─── Saída limpa ────────────────────────────────────────────────
 def abort(msg="Cancelado."):
@@ -153,6 +158,28 @@ def getch():
         abort()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+def _flush_stdin() -> None:
+    """Descarta bytes residuais do buffer de stdin (ex: \r do getpass)."""
+    try:
+        fd = sys.stdin.fileno()
+        termios.tcflush(fd, termios.TCIFLUSH)
+    except Exception:
+        pass
+
+def ask_yes_no(question: str, default_no: bool = True) -> bool:
+    """
+    Pergunta S/N lendo um único caractere via getch().
+    Garante flush do stdin antes de ler para não capturar \r residual.
+    Retorna True para 'S/s', False para qualquer outra tecla.
+    """
+    hint = "S  Sim  /  N  Não (padrão)" if default_no else "S  Sim (padrão)  /  N  Não"
+    print(f"\n  {C.BOLD}{question}{C.RESET}")
+    print(f"  {C.ACCENT}▶  {hint}{C.RESET}  ", end="", flush=True)
+    _flush_stdin()
+    ch = getch()
+    print()  # quebra de linha após a tecla
+    return ch.lower() == 's'
 
 def tag(label, value, color=C.INFO):
     return f"  {C.LABEL}{label:<8}{C.RESET}  {color}{value}{C.RESET}"
@@ -234,6 +261,48 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
     return local_dest, chosen
 
+# ─── Gerenciamento de Senha ─────────────────────────────────────
+def get_jump_password(jump: dict, breadcrumb: str) -> str:
+    """
+    Retorna a senha para o jump host.
+    Ordem de precedência:
+      1. Vault local (já salvo em sessão anterior)
+      2. Digitar nova senha → oferecer salvar no vault
+    Se a senha salva falhar na autenticação SSH, o chamador deve invocar
+    clear_jump_password() e tentar novamente.
+    """
+    vault_key  = f"jump:{jump['user']}@{jump['host']}"
+    saved_pw   = get_secret(vault_key)
+
+    if saved_pw:
+        draw_header(breadcrumb)
+        print(f"\n  {C.SUCCESS}✔  Usando senha salva para {C.ACCENT}{jump['user']}@{jump['host']}{C.RESET}")
+        print(f"  {C.DIM}(vault: {VAULT_FILE}){C.RESET}\n")
+        time.sleep(0.8)
+        return saved_pw
+
+    # Senha não encontrada — pedir ao usuário
+    draw_header(breadcrumb)
+    pw = safe_getpass(f"\n  {C.WARN}Senha {jump['user']}@{jump['host']}:{C.RESET}  ")
+
+    if not pw:
+        abort("Senha não pode ser vazia.")
+
+    if ask_yes_no("Salvar senha no vault local? (arquivo .vault)"):
+        save_secret(vault_key, pw)
+        print(f"  {C.SUCCESS}✔  Senha salva em {C.DIM}{VAULT_FILE}{C.RESET}")
+        time.sleep(0.6)
+    else:
+        print(f"  {C.DIM}Senha não salva.{C.RESET}")
+        time.sleep(0.4)
+
+    return pw
+
+def clear_jump_password(jump: dict) -> None:
+    """Remove a senha do vault (chamar quando a autenticação falhar)."""
+    vault_key = f"jump:{jump['user']}@{jump['host']}"
+    delete_secret(vault_key)
+
 # ─── Main ───────────────────────────────────────────────────────
 def main():
     config = {"jump_hosts": [], "servers": [], "pem_by_server": {}}
@@ -259,25 +328,52 @@ def main():
     else:
         jump = config["jump_hosts"][idx]
 
-    # 2. Gerenciamento de Senha
-    vault_key  = f"jump:{jump['user']}@{jump['host']}"
-    session_pw = get_secret(vault_key)
+    # 2. Gerenciamento de Senha — com retry automático se falhar
+    jump_breadcrumb = f"{jump['user']}@{jump['host']}"
+    session_pw = get_jump_password(jump, jump_breadcrumb)
 
-    if session_pw:
-        print(f"  {C.SUCCESS}✔  Senha recuperada do vault local.{C.RESET}")
-    else:
-        draw_header(f"{jump['user']}@{jump['host']}")
-        session_pw = safe_getpass(f"\n  {C.WARN}Senha {jump['user']}@{jump['host']}:{C.RESET}  ")
-        print(f"\n  {C.BOLD}Salvar senha codificada?{C.RESET} {C.DIM}(arquivo .vault){C.RESET}")
-        print(f"  {C.ACCENT}▶  S  Sim / N  Não{C.RESET}")
-        if getch().lower() == 's':
-            save_secret(vault_key, session_pw)
-            print(f"  {C.SUCCESS}✔  Senha salva.{C.RESET}")
+    # Valida a senha tentando um comando simples no jump host
+    draw_header(jump_breadcrumb)
+    print(f"\n  {C.ACCENT}⟳  Verificando conexão com {jump_breadcrumb}...{C.RESET}", flush=True)
+    test_cmd = [
+        "sshpass", "-p", session_pw,
+        "ssh", "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=8",
+        f"{jump['user']}@{jump['host']}",
+        "echo OK"
+    ]
+    test = subprocess.run(test_cmd, capture_output=True, text=True)
+
+    if test.returncode != 0 or "OK" not in test.stdout:
+        print(f"\n  {C.ERROR}✘  Falha na autenticação. Senha incorreta ou host inacessível.{C.RESET}")
+        print(f"  {C.DIM}Removendo senha do vault...{C.RESET}\n")
+        clear_jump_password(jump)
+        time.sleep(1)
+        # Tenta novamente sem vault (força digitação)
+        session_pw = get_jump_password(jump, jump_breadcrumb)
+        # Segunda verificação — se falhar de novo, aborta
+        test2 = subprocess.run(test_cmd[:-1] + ["-p", session_pw] if False else test_cmd,
+                               capture_output=True, text=True)
+        # Reconstrói com nova senha
+        test_cmd2 = [
+            "sshpass", "-p", session_pw,
+            "ssh", "-o", "StrictHostKeyChecking=no",
+            "-o", "ConnectTimeout=8",
+            f"{jump['user']}@{jump['host']}",
+            "echo OK"
+        ]
+        test2 = subprocess.run(test_cmd2, capture_output=True, text=True)
+        if test2.returncode != 0 or "OK" not in test2.stdout:
+            print(f"\n  {C.ERROR}✘  Autenticação falhou novamente. Verifique o host e a senha.{C.RESET}\n")
+            sys.exit(1)
+
+    print(f"  {C.SUCCESS}✔  Conectado a {jump_breadcrumb}{C.RESET}\n")
+    time.sleep(0.5)
 
     # 3. Seleção de Servidor
     svs    = sorted(config["servers"], key=lambda x: x["alias"].lower())
     s_opts = [f"{s['alias'].ljust(14)}  │  {s['user']}@{s['host']}" for s in svs] + ["+ Novo Servidor"]
-    idx    = interactive_menu(s_opts, "2. Destino — Servidor Interno", f"{jump['user']}@{jump['host']}")
+    idx    = interactive_menu(s_opts, "2. Destino — Servidor Interno", jump_breadcrumb)
 
     if idx == len(s_opts) - 1:
         draw_header("Novo Servidor")
@@ -334,7 +430,7 @@ def main():
 
     display_path = to_host_path(os.path.abspath(ws_file))
 
-    draw_header(f"{jump['user']}@{jump['host']}", server)
+    draw_header(jump_breadcrumb, server)
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")
     print(DIV)
     print(f"\n  {C.BOLD}{C.INFO}1. ABRIR NO EDITOR{C.RESET}\n")
