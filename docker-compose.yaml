@@ -11,5 +11,6 @@ services:
       - "2222:2222"
     volumes:
       - ./.dev_tunnel:/app/.dev_tunnel
+      - ./src:/app/src
     tty: true
     stdin_open: true

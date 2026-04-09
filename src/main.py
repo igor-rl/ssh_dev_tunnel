@@ -5,7 +5,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, a
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.31x"
+__version__ = "3.6.31xxx"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -445,13 +445,24 @@ def main():
                 "port":           TUNNEL_PORT,
                 "username":       server["user"],
                 "privateKeyPath": key_path_for_json,
-                "root":           server["root"]
+                "root":           server["root"],
+                "algorithms": {
+                    "serverHostKey": ["ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ssh-ed25519"],
+                    "pubkey":        ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"]
+                }
             }]
         }
     }
 
     with open(ws_file, "w") as f:
         json.dump(ws_data, f, indent=4)
+
+    # Garante que o arquivo e o diretório sejam acessíveis pelo usuário do host (uid 1000)
+    try:
+        os.chown(ws_file, 1000, 1000)
+        os.chown(ws_dir, 1000, 1000)
+    except PermissionError:
+        pass  # já rodando como tunnel (1000), chown é no-op mas não quebra
 
     display_path = to_wsl_path(ws_file)
 
