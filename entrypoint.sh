@@ -1,14 +1,18 @@
 #!/bin/bash
-# Roda como root, corrige permissões do volume e faz exec como usuário tunnel.
-# Necessário porque volumes Docker nomeados são criados com dono root.
 set -e
 
-TARGET_DIR="/home/tunnel/.dev_tunnel"
+# 1. Garante que o usuário tunnel (1000) possa ler o Docker Socket
+if [ -e /var/run/docker.sock ]; then
+    chown root:1000 /var/run/docker.sock || true
+fi
 
-# Garante que o diretório existe e pertence ao uid/gid 1000 (tunnel)
-mkdir -p "$TARGET_DIR"
-chown -R 1000:1000 "$TARGET_DIR"
-chmod 700 "$TARGET_DIR"
+# 2. Garante permissões na pasta do projeto
+chown -R 1000:1000 /app
 
-# Substitui o processo atual pelo comando tunnel, rodando como usuário tunnel
-exec gosu tunnel tunnel "$@"
+# 3. Verifica se um comando foi passado, caso contrário, segura o container vivo
+if [ $# -eq 0 ]; then
+    echo "--- Dev Tunnel pronto. Aguardando instruções... ---"
+    exec gosu tunnel tail -f /dev/null
+else
+    exec gosu tunnel tunnel "$@"
+fi

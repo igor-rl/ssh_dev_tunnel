@@ -1,19 +1,16 @@
 services:
   app:
     build:
-      dockerfile: Dockerfile
+      context: .
       target: production
     container_name: dev-tunnel
+    # Adicione este bloco:
+    environment:
+      - HOST_PROJECT_PATH=${PWD}
     ports:
       - "2222:2222"
-    environment:
-      - HOST_PROJECT_PATH=/home/tunnel/.dev_tunnel
     volumes:
-      - ./:/app
-      - ssh_dev_tunnel_data:/home/tunnel/.dev_tunnel
+      - ./.dev_tunnel:/app/.dev_tunnel
+      - ./src:/app/src
     tty: true
     stdin_open: true
-
-volumes:
-  ssh_dev_tunnel_data:
-    name: ssh_dev_tunnel_data

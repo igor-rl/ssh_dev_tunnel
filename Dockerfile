@@ -9,27 +9,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Instala dependências do sistema
-# gosu: troca de usuário segura no entrypoint (sem sudo, sem setuid)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     sshpass \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Cria o usuário 'tunnel' (uid/gid 1000 — padrão WSL/Linux)
+# Cria o usuário 'tunnel' (uid 1000 coincide com o padrão do primeiro usuário no WSL)
 RUN groupadd -g 1000 tunnel && \
     useradd -u 1000 -g tunnel -m -s /bin/bash tunnel
 
-# Copia e instala o pacote Python
+# Copia os arquivos primeiro para instalar as dependências
 COPY --chown=tunnel:tunnel . .
 RUN pip install --no-cache-dir .
 
-# Copia e habilita o entrypoint (roda como root para corrigir permissões do volume)
+# Copia e habilita o entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# O entrypoint roda como root, ajusta /home/tunnel/.dev_tunnel e faz exec como tunnel.
-# Isso resolve o PermissionError em volumes Docker nomeados (criados com dono root).
+# Mantemos como root para o entrypoint poder ajustar permissões de volumes montados
 USER root
 
 ENTRYPOINT ["/entrypoint.sh"]

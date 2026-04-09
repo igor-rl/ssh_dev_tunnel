@@ -2,9 +2,6 @@
 .github
 __pycache__
 *.pyc
-.dev_tunnel
-.data
-workspaces
 node_modules
 .DS_Store
 *.code-workspace

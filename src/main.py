@@ -2,15 +2,10 @@
 
 import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, argparse
 
-# ─── Proteção contra sudo ───────────────────────────────────────
-if os.geteuid() == 0:
-    print("\n❌ Não execute este comando com sudo.\nExecute como usuário normal.\n")
-    sys.exit(1)
-
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.30"
+__version__ = "3.6.31"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -36,18 +31,11 @@ class C:
 W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
-# ─── Detecção de Ambiente ───────────────────────────────────────
-IS_DOCKER         = os.path.exists('/.dockerenv') or os.environ.get('HOST_PROJECT_PATH') is not None
+# ─── Estrutura de Diretórios ─────────────────────
+BASE_DIR = "/app/.dev_tunnel"
 HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "")
 
-_app_writable = os.path.isdir("/app") and os.access("/app", os.W_OK)
-
-if IS_DOCKER and _app_writable:
-    BASE_DIR     = "/app/.dev_tunnel"
-    _HOST_PREFIX = "/app"
-else:
-    BASE_DIR     = "/home/tunnel/.dev_tunnel" if IS_DOCKER else os.path.expanduser("~/.dev_tunnel")
-    _HOST_PREFIX = "/home/tunnel/.dev_tunnel"
+_HOST_PREFIX = "/app" 
 
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
@@ -55,15 +43,36 @@ VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
 
-for d in [DATA_DIR, LOCAL_SSH, WS_ROOT]:
-    if not os.path.exists(d):
-        os.makedirs(d, mode=0o700, exist_ok=True)
+# O segredo da persistência: o dono da pasta deve ser o usuário 1000
+for d in [BASE_DIR, DATA_DIR, LOCAL_SSH, WS_ROOT]:
+    os.makedirs(d, mode=0o755, exist_ok=True)
 
 # ─── Converte caminho interno → caminho no host ─────────────────
 def to_host_path(container_path: str) -> str:
-    if IS_DOCKER and HOST_PROJECT_PATH:
-        return container_path.replace(_HOST_PREFIX, HOST_PROJECT_PATH.rstrip("/"))
+    """Converte o caminho interno do container para o caminho real no Windows."""
+    if HOST_PROJECT_PATH:
+        abs_internal = os.path.abspath(container_path)
+        # Se o caminho começa com /app, trocamos pelo caminho do host (ex: C:/Projetos/Precifica)
+        if abs_internal.startswith(_HOST_PREFIX):
+            rel = os.path.relpath(abs_internal, _HOST_PREFIX)
+            return os.path.join(HOST_PROJECT_PATH, rel).replace("\\", "/")
     return container_path
+
+def to_wsl_path(internal_path: str) -> str:
+    abs_internal = os.path.abspath(internal_path)
+    
+    if HOST_PROJECT_PATH:
+        if abs_internal.startswith(_HOST_PREFIX):
+            rel = os.path.relpath(abs_internal, _HOST_PREFIX)
+            return os.path.join(HOST_PROJECT_PATH, rel)
+    return abs_internal
+
+def to_display_path(internal_path: str) -> str:
+    """Converte o caminho interno para a representação amigável ao usuário (~/)."""
+    # Se o caminho começa com /app/.dev_tunnel, substitui por ~/.dev_tunnel
+    if internal_path.startswith(BASE_DIR):
+        return internal_path.replace(BASE_DIR, "~/.dev_tunnel")
+    return internal_pat
 
 # ─── Porta: escolhe a primeira livre a partir da preferencial ───
 def find_available_port(preferred: int, max_attempts: int = 20) -> int:
@@ -186,7 +195,7 @@ def tag(label, value, color=C.INFO):
 
 def draw_header(breadcrumb="", server=None):
     os.system("clear")
-    mode = "DOCKER" if IS_DOCKER else "LOCAL"
+    mode = "DOCKER" if HOST_PROJECT_PATH else "LOCAL"
     print(DIV)
     print(f"  {C.BOLD}{C.INFO}{__company__.upper()}{C.RESET}  {C.DIVIDER}│{C.RESET}  "
           f"{C.ACCENT}{C.BOLD}SSH DEV TUNNEL{C.RESET}  {C.DIM}v{__version__}  [{mode}]{C.RESET}")
@@ -405,12 +414,18 @@ def main():
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
 
-    # 5. Workspace
-    pem_path_for_vs = to_host_path(local_pem)
-
-    ws_dir  = os.path.join(WS_ROOT, server["alias"])
+    # 5. Geração do Workspace com Path Mapping ---
+    ws_dir = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
     ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
+    
+    # Se temos o HOST_PROJECT_PATH, usamos o caminho absoluto do Host para a PEM
+    # Caso contrário, mantém o relativo (fallback)
+    if HOST_PROJECT_PATH:
+        absolute_pem_host = to_host_path(local_pem)
+        key_path_for_json = absolute_pem_host
+    else:
+        key_path_for_json = os.path.relpath(local_pem, start=ws_dir).replace("\\", "/")
 
     ws_data = {
         "folders": [],
@@ -420,15 +435,17 @@ def main():
                 "host":           "127.0.0.1",
                 "port":           TUNNEL_PORT,
                 "username":       server["user"],
-                "privateKeyPath": pem_path_for_vs,
+                "privateKeyPath": key_path_for_json, # <--- Caminho traduzido
                 "root":           server["root"]
             }]
         }
     }
+    
     with open(ws_file, "w") as f:
         json.dump(ws_data, f, indent=4)
 
-    display_path = to_host_path(os.path.abspath(ws_file))
+    # Path formatado para exibição no terminal
+    display_path = to_wsl_path(ws_file)
 
     draw_header(jump_breadcrumb, server)
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  {C.DIM}localhost:{TUNNEL_PORT}{C.RESET}\n")

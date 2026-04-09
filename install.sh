@@ -107,8 +107,7 @@ PYEOF
   fi
 }
 
-# ─── Bloco da função tunnel a ser injetado nos profiles ──────────
-# Usa volume Docker nomeado para persistência sem depender de dir local.
+# ─── Bloco Unix ──────────────────────────────────────────────────
 build_tunnel_block_unix() {
   cat << 'SHELLBLOCK'
 # >>> ssh_dev_tunnel begin <<<
@@ -120,16 +119,19 @@ tunnel() {
       *) shift ;;
     esac
   done
+  local DATA_DIR="$HOME/.dev_tunnel_config"
+  mkdir -p "$DATA_DIR"
   docker run -it --rm --pull always \
     -p "${PORT}:${PORT}" \
-    -v ssh_dev_tunnel_data:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="/home/tunnel/.dev_tunnel" \
+    -v "$DATA_DIR":/home/tunnel/.dev_tunnel \
+    -e HOST_PROJECT_PATH="$DATA_DIR" \
     ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
 }
 # >>> ssh_dev_tunnel end <<<
 SHELLBLOCK
 }
 
+# ─── Bloco Windows (Git Bash / MSYS) ────────────────────────────
 build_tunnel_block_windows() {
   cat << 'SHELLBLOCK'
 # >>> ssh_dev_tunnel begin <<<
@@ -141,17 +143,19 @@ tunnel() {
       *) shift ;;
     esac
   done
+  local DATA_DIR="$HOME/.dev_tunnel_config"
+  mkdir -p "$DATA_DIR"
   winpty docker run -it --rm --pull always \
     -p "${PORT}:${PORT}" \
-    -v ssh_dev_tunnel_data:/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="/home/tunnel/.dev_tunnel" \
+    -v "$DATA_DIR":/home/tunnel/.dev_tunnel \
+    -e HOST_PROJECT_PATH="$DATA_DIR" \
     ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
 }
 # >>> ssh_dev_tunnel end <<<
 SHELLBLOCK
 }
 
-# ─── Escreve o bloco em um profile, criando-o se necessário ──────
+# ─── Escreve o bloco em um profile ───────────────────────────────
 inject_into_profile() {
   local profile="$1"
   touch "$profile"
@@ -169,34 +173,22 @@ if [[ "$CHOICE" == "Instalar" ]]; then
 
   header "Docker"
   echo ""
-  info "Usando volume Docker nomeado: ${VOLUME_NAME}"
-  info "Os dados persistem mesmo após 'docker rm'."
+  info "Os dados serão salvos em: \$HOME/.dev_tunnel_config/"
+  info "Persistem entre atualizações e reinstalações."
   echo ""
 
-  # Cria o volume nomeado caso não exista
-  if ! docker volume inspect "$VOLUME_NAME" &>/dev/null; then
-    docker volume create "$VOLUME_NAME" > /dev/null
-    ok "Volume Docker '${VOLUME_NAME}' criado."
-  else
-    ok "Volume Docker '${VOLUME_NAME}' já existe."
-  fi
-
-  # Injeta em todos os profiles de shell encontrados
   PROFILES_WRITTEN=0
 
-  # .bashrc — presente em Linux e WSL
   if [ -f "$HOME/.bashrc" ] || command -v bash &>/dev/null; then
     inject_into_profile "$HOME/.bashrc"
     PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
   fi
 
-  # .zshrc — presente em Mac e WSL com zsh (ex: Oh My Zsh no Windows)
   if [ -f "$HOME/.zshrc" ] || command -v zsh &>/dev/null; then
     inject_into_profile "$HOME/.zshrc"
     PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
   fi
 
-  # .bash_profile — fallback para Mac sem .bashrc
   if [[ "$OSTYPE" == "darwin"* ]] && [ ! -f "$HOME/.bashrc" ]; then
     inject_into_profile "$HOME/.bash_profile"
     PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
@@ -218,17 +210,16 @@ elif [[ "$CHOICE" == "Desinstalar" ]]; then
   done
 
   echo ""
-  warn "Deseja apagar também o volume Docker com servidores e chaves PEM?"
-  echo -e "  ${DIM}Volume: ${VOLUME_NAME}${NC}\n"
+  warn "Deseja apagar também os dados salvos? (~/.dev_tunnel_config)"
+  echo -e "  ${DIM}Contém: servidores, chaves PEM e vault de senhas${NC}\n"
   echo -e "$DIV"
-  echo -e "  ${BOLD}${WARN}Apagar volume? (s/N)${NC}  \c"
+  echo -e "  ${BOLD}${WARN}Apagar dados? (s/N)${NC}  \c"
   read -r response </dev/tty
   if [[ "$response" =~ ^([sS])$ ]]; then
-    docker volume rm "$VOLUME_NAME" 2>/dev/null \
-      && ok "Volume '${VOLUME_NAME}' removido." \
-      || warn "Volume não encontrado ou já removido."
+    rm -rf "$HOME/.dev_tunnel_config"
+    ok "Diretório ~/.dev_tunnel_config removido."
   else
-    info "Volume mantido: ${VOLUME_NAME}"
+    info "Dados mantidos em ~/.dev_tunnel_config"
   fi
 
   echo ""
