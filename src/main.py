@@ -5,7 +5,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, a
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.31"
+__version__ = "3.6.31x"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -31,11 +31,38 @@ class C:
 W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
-# ─── Estrutura de Diretórios ─────────────────────
-BASE_DIR = "/app/.dev_tunnel"
-HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "")
+# ─── Estrutura de Diretórios ─────────────────────────────────────
+#
+# Dois modos de execução:
+#
+#   A) Via install.sh (Docker):
+#      - Volume:    $HOME/.dev_tunnel_config → /home/tunnel/.dev_tunnel
+#      - Env:       HOST_PROJECT_PATH = $HOME/.dev_tunnel_config  (path no host)
+#      - BASE_DIR:  /home/tunnel/.dev_tunnel
+#      - PREFIX:    /home/tunnel
+#
+#   B) Via docker-compose (dev local):
+#      - Volume:    ./.dev_tunnel → /app/.dev_tunnel
+#      - Env:       HOST_PROJECT_PATH = $PWD  (path no host)
+#      - BASE_DIR:  /app/.dev_tunnel
+#      - PREFIX:    /app
+#
+# A lógica abaixo detecta o modo automaticamente pelo caminho real do
+# diretório base, sem depender de variáveis adicionais.
+# ────────────────────────────────────────────────────────────────
 
-_HOST_PREFIX = "/app" 
+HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "") + "/.dev_tunnel"
+
+# Detecta qual BASE_DIR existe de fato no container
+_CANDIDATE_A = "/home/tunnel/.dev_tunnel"   # modo install.sh
+_CANDIDATE_B = "/app/.dev_tunnel"           # modo docker-compose
+
+if os.path.exists(_CANDIDATE_A):
+    BASE_DIR     = _CANDIDATE_A
+    _HOST_PREFIX = "/home/tunnel"
+else:
+    BASE_DIR     = _CANDIDATE_B
+    _HOST_PREFIX = "/app"
 
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
@@ -43,36 +70,43 @@ VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
 
-# O segredo da persistência: o dono da pasta deve ser o usuário 1000
 for d in [BASE_DIR, DATA_DIR, LOCAL_SSH, WS_ROOT]:
     os.makedirs(d, mode=0o755, exist_ok=True)
 
-# ─── Converte caminho interno → caminho no host ─────────────────
+# ─── Converte caminho interno → caminho real no host ────────────
 def to_host_path(container_path: str) -> str:
-    """Converte o caminho interno do container para o caminho real no Windows."""
-    if HOST_PROJECT_PATH:
-        abs_internal = os.path.abspath(container_path)
-        # Se o caminho começa com /app, trocamos pelo caminho do host (ex: C:/Projetos/Precifica)
-        if abs_internal.startswith(_HOST_PREFIX):
-            rel = os.path.relpath(abs_internal, _HOST_PREFIX)
-            return os.path.join(HOST_PROJECT_PATH, rel).replace("\\", "/")
+    """
+    Traduz um caminho absoluto dentro do container para o caminho
+    equivalente no sistema do host (Windows, Mac, WSL, Linux).
+
+    Exemplo (modo install.sh, WSL):
+        container: /home/tunnel/.dev_tunnel/.data/.ssh/key.pem
+        host:      /home/igorlage/.dev_tunnel_config/.data/.ssh/key.pem
+    """
+    if not HOST_PROJECT_PATH:
+        return container_path
+    abs_internal = os.path.abspath(container_path)
+    if abs_internal.startswith(BASE_DIR):
+        rel = os.path.relpath(abs_internal, BASE_DIR)
+        return os.path.join(HOST_PROJECT_PATH, rel).replace("\\", "/")
     return container_path
 
 def to_wsl_path(internal_path: str) -> str:
+    """
+    Retorna o caminho que o usuário deve usar no terminal do host
+    (igual a to_host_path, mas sem forçar barras forward).
+    """
     abs_internal = os.path.abspath(internal_path)
-    
-    if HOST_PROJECT_PATH:
-        if abs_internal.startswith(_HOST_PREFIX):
-            rel = os.path.relpath(abs_internal, _HOST_PREFIX)
-            return os.path.join(HOST_PROJECT_PATH, rel)
+    if HOST_PROJECT_PATH and abs_internal.startswith(BASE_DIR):
+        rel = os.path.relpath(abs_internal, BASE_DIR)
+        return os.path.join(HOST_PROJECT_PATH, rel)
     return abs_internal
 
 def to_display_path(internal_path: str) -> str:
-    """Converte o caminho interno para a representação amigável ao usuário (~/)."""
-    # Se o caminho começa com /app/.dev_tunnel, substitui por ~/.dev_tunnel
+    """Representação amigável para exibição no terminal."""
     if internal_path.startswith(BASE_DIR):
         return internal_path.replace(BASE_DIR, "~/.dev_tunnel")
-    return internal_pat
+    return internal_path
 
 # ─── Porta: escolhe a primeira livre a partir da preferencial ───
 def find_available_port(preferred: int, max_attempts: int = 20) -> int:
@@ -94,7 +128,6 @@ if TUNNEL_PORT != args.port:
 
 # ─── Simple Vault (Base64) ──────────────────────────────────────
 def _load_vault() -> dict:
-    """Carrega o vault do disco. Retorna {} se não existir ou estiver corrompido."""
     if not os.path.exists(VAULT_FILE):
         return {}
     try:
@@ -104,13 +137,11 @@ def _load_vault() -> dict:
         return {}
 
 def _save_vault(vault: dict) -> None:
-    """Persiste o vault no disco com permissão restrita."""
-    # Garante que o diretório pai existe (importante no primeiro uso do volume)
     os.makedirs(os.path.dirname(VAULT_FILE), mode=0o700, exist_ok=True)
     tmp = VAULT_FILE + ".tmp"
     with open(tmp, 'w') as f:
         json.dump(vault, f)
-    os.replace(tmp, VAULT_FILE)   # atômica — evita arquivo corrompido
+    os.replace(tmp, VAULT_FILE)
     os.chmod(VAULT_FILE, 0o600)
 
 def save_secret(key: str, value: str) -> None:
@@ -169,7 +200,6 @@ def getch():
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 def _flush_stdin() -> None:
-    """Descarta bytes residuais do buffer de stdin (ex: \r do getpass)."""
     try:
         fd = sys.stdin.fileno()
         termios.tcflush(fd, termios.TCIFLUSH)
@@ -177,17 +207,12 @@ def _flush_stdin() -> None:
         pass
 
 def ask_yes_no(question: str, default_no: bool = True) -> bool:
-    """
-    Pergunta S/N lendo um único caractere via getch().
-    Garante flush do stdin antes de ler para não capturar \r residual.
-    Retorna True para 'S/s', False para qualquer outra tecla.
-    """
     hint = "S  Sim  /  N  Não (padrão)" if default_no else "S  Sim (padrão)  /  N  Não"
     print(f"\n  {C.BOLD}{question}{C.RESET}")
     print(f"  {C.ACCENT}▶  {hint}{C.RESET}  ", end="", flush=True)
     _flush_stdin()
     ch = getch()
-    print()  # quebra de linha após a tecla
+    print()
     return ch.lower() == 's'
 
 def tag(label, value, color=C.INFO):
@@ -272,16 +297,8 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
 
 # ─── Gerenciamento de Senha ─────────────────────────────────────
 def get_jump_password(jump: dict, breadcrumb: str) -> str:
-    """
-    Retorna a senha para o jump host.
-    Ordem de precedência:
-      1. Vault local (já salvo em sessão anterior)
-      2. Digitar nova senha → oferecer salvar no vault
-    Se a senha salva falhar na autenticação SSH, o chamador deve invocar
-    clear_jump_password() e tentar novamente.
-    """
-    vault_key  = f"jump:{jump['user']}@{jump['host']}"
-    saved_pw   = get_secret(vault_key)
+    vault_key = f"jump:{jump['user']}@{jump['host']}"
+    saved_pw  = get_secret(vault_key)
 
     if saved_pw:
         draw_header(breadcrumb)
@@ -290,7 +307,6 @@ def get_jump_password(jump: dict, breadcrumb: str) -> str:
         time.sleep(0.8)
         return saved_pw
 
-    # Senha não encontrada — pedir ao usuário
     draw_header(breadcrumb)
     pw = safe_getpass(f"\n  {C.WARN}Senha {jump['user']}@{jump['host']}:{C.RESET}  ")
 
@@ -308,7 +324,6 @@ def get_jump_password(jump: dict, breadcrumb: str) -> str:
     return pw
 
 def clear_jump_password(jump: dict) -> None:
-    """Remove a senha do vault (chamar quando a autenticação falhar)."""
     vault_key = f"jump:{jump['user']}@{jump['host']}"
     delete_secret(vault_key)
 
@@ -358,12 +373,7 @@ def main():
         print(f"  {C.DIM}Removendo senha do vault...{C.RESET}\n")
         clear_jump_password(jump)
         time.sleep(1)
-        # Tenta novamente sem vault (força digitação)
         session_pw = get_jump_password(jump, jump_breadcrumb)
-        # Segunda verificação — se falhar de novo, aborta
-        test2 = subprocess.run(test_cmd[:-1] + ["-p", session_pw] if False else test_cmd,
-                               capture_output=True, text=True)
-        # Reconstrói com nova senha
         test_cmd2 = [
             "sshpass", "-p", session_pw,
             "ssh", "-o", "StrictHostKeyChecking=no",
@@ -414,18 +424,17 @@ def main():
         tunnel = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
 
-    # 5. Geração do Workspace com Path Mapping ---
-    ws_dir = os.path.join(WS_ROOT, server["alias"])
+    # 5. Geração do Workspace
+    #
+    # privateKeyPath deve ser o caminho ABSOLUTO no host (WSL/Mac/Windows),
+    # pois é o VS Code / Cursor rodando no host quem lê esse arquivo —
+    # não o container. Usamos to_host_path() para a tradução correta.
+    # ────────────────────────────────────────────────────────────
+    ws_dir  = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
     ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
-    
-    # Se temos o HOST_PROJECT_PATH, usamos o caminho absoluto do Host para a PEM
-    # Caso contrário, mantém o relativo (fallback)
-    if HOST_PROJECT_PATH:
-        absolute_pem_host = to_host_path(local_pem)
-        key_path_for_json = absolute_pem_host
-    else:
-        key_path_for_json = os.path.relpath(local_pem, start=ws_dir).replace("\\", "/")
+
+    key_path_for_json = to_host_path(local_pem)
 
     ws_data = {
         "folders": [],
@@ -435,16 +444,15 @@ def main():
                 "host":           "127.0.0.1",
                 "port":           TUNNEL_PORT,
                 "username":       server["user"],
-                "privateKeyPath": key_path_for_json, # <--- Caminho traduzido
+                "privateKeyPath": key_path_for_json,
                 "root":           server["root"]
             }]
         }
     }
-    
+
     with open(ws_file, "w") as f:
         json.dump(ws_data, f, indent=4)
 
-    # Path formatado para exibição no terminal
     display_path = to_wsl_path(ws_file)
 
     draw_header(jump_breadcrumb, server)

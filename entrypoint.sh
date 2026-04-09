@@ -9,7 +9,11 @@ fi
 # 2. Garante permissões na pasta do projeto
 chown -R 1000:1000 /app
 
-# 3. Verifica se um comando foi passado, caso contrário, segura o container vivo
+# 3. Garante que os subdiretórios de .dev_tunnel sejam graváveis
+#    (resolve EACCES ao salvar .code-workspace via volume montado)
+chmod -R 755 /app/.dev_tunnel 2>/dev/null || true
+
+# 4. Verifica se um comando foi passado, caso contrário, segura o container vivo
 if [ $# -eq 0 ]; then
     echo "--- Dev Tunnel pronto. Aguardando instruções... ---"
     exec gosu tunnel tail -f /dev/null
