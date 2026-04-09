@@ -437,7 +437,12 @@ def main():
     key_path_for_json = to_host_path(local_pem)
 
     ws_data = {
-        "folders": [],
+        "folders": [
+            {
+                "name": f"SSH FS - {server['alias']}",
+                "uri": f"ssh://{server['alias']}/"
+            }
+        ],
         "settings": {
             "sshfs.configs": [{
                 "name":           server["alias"],
