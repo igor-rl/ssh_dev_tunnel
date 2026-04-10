@@ -5,7 +5,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, a
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.7.2"
+__version__ = "3.7.3"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -46,9 +46,14 @@ else:
 
 DATA_DIR    = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE = os.path.join(DATA_DIR, "servers.json")
-VAULT_FILE  = os.path.join(DATA_DIR, ".vault")
 WS_ROOT     = os.path.join(BASE_DIR, "workspaces")
 LOCAL_SSH   = os.path.join(DATA_DIR, ".ssh")
+
+# ─── Arquivo de senhas ───────────────────────────────────────────
+# Fica em DATA_DIR junto com servers.json e as chaves PEM.
+# Formato simples: uma linha por entrada → chave=valor
+# Permissão 0o600 — leitura só pelo dono do arquivo.
+PASSWORDS_FILE = os.path.join(DATA_DIR, ".passwords")
 
 for d in [BASE_DIR, DATA_DIR, LOCAL_SSH, WS_ROOT]:
     os.makedirs(d, mode=0o755, exist_ok=True)
@@ -93,57 +98,50 @@ if TUNNEL_PORT != args.port:
     print(f"\n  {C.WARN}⚠  Porta {args.port} ocupada — usando {TUNNEL_PORT}{C.RESET}\n")
     time.sleep(1)
 
-# ─── Simple Vault (Base64) ──────────────────────────────────────
-def _load_vault() -> dict:
-    if not os.path.exists(VAULT_FILE):
-        return {}
-    # _fix_ownership separado do try/except: erros de chown nunca devem
-    # impedir a leitura nem ser silenciados junto com erros de JSON.
-    _fix_ownership(VAULT_FILE)
-    try:
-        with open(VAULT_FILE, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+# ─── Passwords Store ────────────────────────────────────────────
+# Arquivo texto simples em DATA_DIR/.passwords
+# Cada linha: chave=valor  (a chave nunca contém '=')
+# chmod 600 garante segurança mínima no host.
 
-def _save_vault(vault: dict) -> None:
-    os.makedirs(os.path.dirname(VAULT_FILE), mode=0o700, exist_ok=True)
-    tmp = VAULT_FILE + ".tmp"
-    with open(tmp, 'w') as f:
-        json.dump(vault, f)
-    os.replace(tmp, VAULT_FILE)
-    os.chmod(VAULT_FILE, 0o600)
-    # FIX PROBLEMA 2: garante ownership correto após salvar
-    _fix_ownership(VAULT_FILE)
-
-def _fix_ownership(path: str) -> None:
-    """Corrige o ownership de um arquivo para uid/gid 1000 (usuário tunnel).
-    Opera silenciosamente — falha é esperada quando já rodamos como uid 1000."""
+def _load_passwords() -> dict:
+    result = {}
+    if not os.path.exists(PASSWORDS_FILE):
+        return result
     try:
-        os.chown(path, 1000, 1000)
-    except (PermissionError, OSError):
+        with open(PASSWORDS_FILE, "r") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    result[k] = v
+    except OSError:
         pass
+    return result
+
+def _save_passwords(data: dict) -> None:
+    tmp = PASSWORDS_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            for k, v in data.items():
+                f.write(f"{k}={v}\n")
+        os.replace(tmp, PASSWORDS_FILE)
+        os.chmod(PASSWORDS_FILE, 0o600)
+    except OSError as e:
+        print(f"\n  {C.WARN}⚠  Não foi possível salvar senhas: {e}{C.RESET}\n")
 
 def save_secret(key: str, value: str) -> None:
-    vault = _load_vault()
-    vault[key] = base64.b64encode(value.encode()).decode()
-    _save_vault(vault)
+    data = _load_passwords()
+    data[key] = value
+    _save_passwords(data)
 
 def get_secret(key: str) -> str | None:
-    vault = _load_vault()
-    encoded = vault.get(key)
-    if encoded is None:
-        return None
-    try:
-        return base64.b64decode(encoded.encode()).decode()
-    except Exception:
-        return None
+    return _load_passwords().get(key)
 
 def delete_secret(key: str) -> None:
-    vault = _load_vault()
-    if key in vault:
-        del vault[key]
-        _save_vault(vault)
+    data = _load_passwords()
+    if key in data:
+        del data[key]
+        _save_passwords(data)
 
 # ─── Saída limpa ────────────────────────────────────────────────
 def abort(msg="Cancelado."):
@@ -153,14 +151,12 @@ def abort(msg="Cancelado."):
 def safe_input(prompt: str, prefill: str = "") -> str:
     """input() com suporte completo a navegação pelo teclado (setas, Home, End,
     Backspace, Delete) via GNU readline. Ctrl+C aborta normalmente."""
-    # readline só funciona quando stdin é um tty real
     if not sys.stdin.isatty():
         try:
             return input(prompt)
         except KeyboardInterrupt:
             abort()
 
-    # prefill permite pre-popular o campo (útil para edição futura)
     if prefill:
         readline.set_startup_hook(lambda: readline.insert_text(prefill))
     try:
@@ -174,12 +170,6 @@ def safe_getpass(prompt: str) -> str:
     """getpass com suporte a setas esquerda/direita, Home, End, Backspace e
     Delete. Os caracteres digitados NÃO são exibidos (modo senha).
     Ctrl+C aborta. Ctrl+U limpa o campo.
-
-    Estratégia de redraw:
-      - O prompt é escrito UMA vez, antes do loop.
-      - A cada tecla, apagamos apenas os asteriscos (não o prompt) usando
-        \033[<n>D para recuar + \033[K para apagar até o fim da linha.
-      - Isso evita o \r/\033[2K que causava scroll/newline em PTYs do Docker.
     """
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -187,45 +177,17 @@ def safe_getpass(prompt: str) -> str:
     buf: list[str] = []
     pos: int       = 0
 
-    # Escreve o prompt ANTES do setraw para que o terminal ainda esteja em
-    # modo normal e não interprete os bytes de outra forma.
     sys.stdout.write(prompt)
     sys.stdout.flush()
 
-    # Só agora entra em modo raw — a partir daqui cada byte chega imediatamente.
     tty.setraw(fd)
 
-    def _stars_len() -> int:
-        return len(buf)
-
     def _redraw() -> None:
-        """Redesenha apenas a parte dos asteriscos, sem tocar no prompt.
-
-        Sequência:
-          1. Se já há asteriscos na tela, recua o cursor até o primeiro deles.
-          2. Apaga do cursor até o fim da linha (\033[K).
-          3. Reescreve os asteriscos.
-          4. Recua o cursor até a posição lógica (pos).
-        """
-        n = _stars_len()
-        # Calcula quantos asteriscos estão na tela agora (antes de reescrever).
-        # Como só chamamos _redraw após mudar buf/pos, usamos len(buf) diretamente.
-        chars_on_screen = n  # após a modificação já é o valor correto
-
-        # Recua até o início dos asteriscos (quantos caracteres o cursor avançou
-        # desde o fim do prompt — que é sempre chars_on_screen_before, mas como
-        # nunca deixamos lixo, simplesmente recuamos até o col logo após o prompt).
-        # Usamos \033[<n>D apenas se houver algo para recuar.
-        # Para calcular o quanto recuar: o cursor está em pos (lógico) dentro dos
-        # asteriscos, então precisamos recuar `pos` posições para chegar ao início.
         if pos > 0:
             sys.stdout.write(f"\033[{pos}D")
-        # Apaga do cursor até o fim da linha
         sys.stdout.write("\033[K")
-        # Reescreve todos os asteriscos
         masked = "*" * len(buf)
         sys.stdout.write(masked)
-        # Reposiciona o cursor na posição lógica correta
         chars_after = len(buf) - pos
         if chars_after > 0:
             sys.stdout.write(f"\033[{chars_after}D")
@@ -235,80 +197,68 @@ def safe_getpass(prompt: str) -> str:
         while True:
             ch = os.read(fd, 1)
 
-            # ── Ctrl+C ──────────────────────────────────────────
             if ch == b'\x03':
                 sys.stdout.write("\n")
                 sys.stdout.flush()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 abort()
 
-            # ── Enter ───────────────────────────────────────────
             elif ch in (b'\r', b'\n'):
                 break
 
-            # ── Ctrl+U — limpa o campo ──────────────────────────
             elif ch == b'\x15':
                 buf.clear()
                 pos = 0
                 _redraw()
 
-            # ── Backspace ───────────────────────────────────────
             elif ch in (b'\x7f', b'\x08'):
                 if pos > 0:
                     buf.pop(pos - 1)
                     pos -= 1
                     _redraw()
 
-            # ── Sequências de escape (setas, Home, End, Delete) ─
             elif ch == b'\x1b':
                 seq = os.read(fd, 1)
                 if seq == b'[':
                     seq2 = os.read(fd, 1)
 
-                    # seta esquerda
                     if seq2 == b'D':
                         if pos > 0:
                             pos -= 1
                             sys.stdout.write("\033[1D")
                             sys.stdout.flush()
 
-                    # seta direita
                     elif seq2 == b'C':
                         if pos < len(buf):
                             pos += 1
                             sys.stdout.write("\033[1C")
                             sys.stdout.flush()
 
-                    # Home  (^[[H  ou  ^[[1~)
                     elif seq2 in (b'H', b'1'):
                         if seq2 == b'1':
-                            os.read(fd, 1)   # consome o '~'
+                            os.read(fd, 1)
                         if pos > 0:
                             sys.stdout.write(f"\033[{pos}D")
                             sys.stdout.flush()
                         pos = 0
 
-                    # End   (^[[F  ou  ^[[4~)
                     elif seq2 in (b'F', b'4'):
                         if seq2 == b'4':
-                            os.read(fd, 1)   # consome o '~'
+                            os.read(fd, 1)
                         if pos < len(buf):
                             sys.stdout.write(f"\033[{len(buf) - pos}C")
                             sys.stdout.flush()
                         pos = len(buf)
 
-                    # Delete  (^[[3~)
                     elif seq2 == b'3':
-                        os.read(fd, 1)       # consome o '~'
+                        os.read(fd, 1)
                         if pos < len(buf):
                             buf.pop(pos)
                             _redraw()
 
-                    # setas cima/baixo — ignoradas no getpass
                     elif seq2 in (b'A', b'B'):
                         pass
 
-            # ── Caractere imprimível ─────────────────────────────
             elif ch >= b' ':
                 char = ch.decode("utf-8", errors="replace")
                 buf.insert(pos, char)
@@ -399,13 +349,18 @@ def interactive_menu(options, title, breadcrumb="", footer_hint=None):
         elif ch.lower() == 'q': abort()
 
 # ─── PEM Management ─────────────────────────────────────────────
+def _fix_ownership(path: str) -> None:
+    try:
+        os.chown(path, 1000, 1000)
+    except (PermissionError, OSError):
+        pass
+
 def choose_pem_for_server(jump, password, server, config, breadcrumb):
     server_key = f"{server['user']}@{server['host']}"
     saved_pem  = config.get("pem_by_server", {}).get(server_key)
     local_path = os.path.join(LOCAL_SSH, saved_pem) if saved_pem else None
 
     if saved_pem and os.path.exists(local_path):
-        # FIX PROBLEMA 1: corrige ownership mesmo para PEMs já existentes
         _fix_ownership(local_path)
         os.chmod(local_path, 0o600)
         return local_path, saved_pem
@@ -433,9 +388,6 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
         f"{jump['user']}@{jump['host']}:~/.ssh/{chosen}", local_dest
     ])
     os.chmod(local_dest, 0o600)
-
-    # FIX PROBLEMA 1: corrige ownership do PEM recém-baixado e do diretório .ssh
-    # O scp pode ter criado o arquivo como root se o processo ainda tiver UID 0
     _fix_ownership(local_dest)
     _fix_ownership(LOCAL_SSH)
 
@@ -451,7 +403,7 @@ def get_jump_password(jump: dict, breadcrumb: str) -> str:
     if saved_pw:
         draw_header(breadcrumb)
         print(f"\n  {C.SUCCESS}✔  Usando senha salva para {C.ACCENT}{jump['user']}@{jump['host']}{C.RESET}")
-        print(f"  {C.DIM}(vault: {VAULT_FILE}){C.RESET}\n")
+        print(f"  {C.DIM}(arquivo: {PASSWORDS_FILE}){C.RESET}\n")
         time.sleep(0.8)
         return saved_pw
 
@@ -461,9 +413,9 @@ def get_jump_password(jump: dict, breadcrumb: str) -> str:
     if not pw:
         abort("Senha não pode ser vazia.")
 
-    if ask_yes_no("Salvar senha no vault local? (arquivo .vault)"):
+    if ask_yes_no("Salvar senha para próximas sessões?"):
         save_secret(vault_key, pw)
-        print(f"  {C.SUCCESS}✔  Senha salva em {C.DIM}{VAULT_FILE}{C.RESET}")
+        print(f"  {C.SUCCESS}✔  Senha salva em {C.DIM}{PASSWORDS_FILE}{C.RESET}")
         time.sleep(0.6)
     else:
         print(f"  {C.DIM}Senha não salva.{C.RESET}")
@@ -477,8 +429,6 @@ def clear_jump_password(jump: dict) -> None:
 
 # ─── Normaliza root path ─────────────────────────────────────────
 def normalize_root(root: str) -> str:
-    """FIX PROBLEMA 3: garante que o root path comece com '/'
-    para o SSH FS não interpretar como relativo ao home do usuário."""
     if not root:
         return "/"
     root = root.strip()
@@ -529,7 +479,7 @@ def main():
 
     if test.returncode != 0 or "OK" not in test.stdout:
         print(f"\n  {C.ERROR}✘  Falha na autenticação. Senha incorreta ou host inacessível.{C.RESET}")
-        print(f"  {C.DIM}Removendo senha do vault...{C.RESET}\n")
+        print(f"  {C.DIM}Removendo senha salva...{C.RESET}\n")
         clear_jump_password(jump)
         time.sleep(1)
         session_pw = get_jump_password(jump, jump_breadcrumb)
@@ -562,7 +512,6 @@ def main():
             sys.exit(1)
         u, h  = raw.split("@", 1)
         path  = safe_input(f"  {C.LABEL}Path Remoto:{C.RESET}  ").strip()
-        # FIX PROBLEMA 3: normaliza na hora de salvar
         server = {"alias": alias, "host": h, "user": u, "root": normalize_root(path)}
         config["servers"].append(server)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
@@ -590,9 +539,6 @@ def main():
     ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
 
     key_path_for_json = to_host_path(local_pem)
-
-    # FIX PROBLEMA 3: normaliza o root também na hora de gerar o workspace,
-    # cobrindo servidores cadastrados antes da correção (sem barra inicial)
     server_root = normalize_root(server.get("root", "/"))
 
     ws_data = {
@@ -609,7 +555,7 @@ def main():
                 "port":           TUNNEL_PORT,
                 "username":       server["user"],
                 "privateKeyPath": key_path_for_json,
-                "root":           server_root,          # FIX: sempre com '/' inicial
+                "root":           server_root,
                 "algorithms": {
                     "serverHostKey": ["ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ssh-ed25519"],
                     "pubkey":        ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"]
