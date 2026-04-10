@@ -32,30 +32,10 @@ W = 65
 DIV = f"{C.DIVIDER}{'─' * W}{C.RESET}"
 
 # ─── Estrutura de Diretórios ─────────────────────────────────────
-#
-# Dois modos de execução:
-#
-#   A) Via install.sh (Docker):
-#      - Volume:    $HOME/.dev_tunnel_config → /home/tunnel/.dev_tunnel
-#      - Env:       HOST_PROJECT_PATH = $HOME/.dev_tunnel_config  (path no host)
-#      - BASE_DIR:  /home/tunnel/.dev_tunnel
-#      - PREFIX:    /home/tunnel
-#
-#   B) Via docker-compose (dev local):
-#      - Volume:    ./.dev_tunnel → /app/.dev_tunnel
-#      - Env:       HOST_PROJECT_PATH = $PWD  (path no host)
-#      - BASE_DIR:  /app/.dev_tunnel
-#      - PREFIX:    /app
-#
-# A lógica abaixo detecta o modo automaticamente pelo caminho real do
-# diretório base, sem depender de variáveis adicionais.
-# ────────────────────────────────────────────────────────────────
-
 HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "") + "/.dev_tunnel"
 
-# Detecta qual BASE_DIR existe de fato no container
-_CANDIDATE_A = "/home/tunnel/.dev_tunnel"   # modo install.sh
-_CANDIDATE_B = "/app/.dev_tunnel"           # modo docker-compose
+_CANDIDATE_A = "/home/tunnel/.dev_tunnel"
+_CANDIDATE_B = "/app/.dev_tunnel"
 
 if os.path.exists(_CANDIDATE_A):
     BASE_DIR     = _CANDIDATE_A
@@ -75,14 +55,6 @@ for d in [BASE_DIR, DATA_DIR, LOCAL_SSH, WS_ROOT]:
 
 # ─── Converte caminho interno → caminho real no host ────────────
 def to_host_path(container_path: str) -> str:
-    """
-    Traduz um caminho absoluto dentro do container para o caminho
-    equivalente no sistema do host (Windows, Mac, WSL, Linux).
-
-    Exemplo (modo install.sh, WSL):
-        container: /home/tunnel/.dev_tunnel/.data/.ssh/key.pem
-        host:      /home/igorlage/.dev_tunnel_config/.data/.ssh/key.pem
-    """
     if not HOST_PROJECT_PATH:
         return container_path
     abs_internal = os.path.abspath(container_path)
@@ -92,10 +64,6 @@ def to_host_path(container_path: str) -> str:
     return container_path
 
 def to_wsl_path(internal_path: str) -> str:
-    """
-    Retorna o caminho que o usuário deve usar no terminal do host
-    (igual a to_host_path, mas sem forçar barras forward).
-    """
     abs_internal = os.path.abspath(internal_path)
     if HOST_PROJECT_PATH and abs_internal.startswith(BASE_DIR):
         rel = os.path.relpath(abs_internal, BASE_DIR)
@@ -103,7 +71,6 @@ def to_wsl_path(internal_path: str) -> str:
     return abs_internal
 
 def to_display_path(internal_path: str) -> str:
-    """Representação amigável para exibição no terminal."""
     if internal_path.startswith(BASE_DIR):
         return internal_path.replace(BASE_DIR, "~/.dev_tunnel")
     return internal_path
@@ -131,6 +98,9 @@ def _load_vault() -> dict:
     if not os.path.exists(VAULT_FILE):
         return {}
     try:
+        # FIX PROBLEMA 2: garante que o vault seja legível pelo usuário atual
+        # mesmo que tenha sido criado originalmente como root
+        _fix_ownership(VAULT_FILE)
         with open(VAULT_FILE, 'r') as f:
             return json.load(f)
     except Exception:
@@ -143,6 +113,16 @@ def _save_vault(vault: dict) -> None:
         json.dump(vault, f)
     os.replace(tmp, VAULT_FILE)
     os.chmod(VAULT_FILE, 0o600)
+    # FIX PROBLEMA 2: garante ownership correto após salvar
+    _fix_ownership(VAULT_FILE)
+
+def _fix_ownership(path: str) -> None:
+    """Corrige o ownership de um arquivo para uid/gid 1000 (usuário tunnel).
+    Opera silenciosamente — falha é esperada quando já rodamos como uid 1000."""
+    try:
+        os.chown(path, 1000, 1000)
+    except (PermissionError, OSError):
+        pass
 
 def save_secret(key: str, value: str) -> None:
     vault = _load_vault()
@@ -265,6 +245,9 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
     local_path = os.path.join(LOCAL_SSH, saved_pem) if saved_pem else None
 
     if saved_pem and os.path.exists(local_path):
+        # FIX PROBLEMA 1: corrige ownership mesmo para PEMs já existentes
+        _fix_ownership(local_path)
+        os.chmod(local_path, 0o600)
         return local_path, saved_pem
 
     print(f"\n  {C.ACCENT}⟳  Buscando chaves no jump host...{C.RESET}")
@@ -290,6 +273,11 @@ def choose_pem_for_server(jump, password, server, config, breadcrumb):
         f"{jump['user']}@{jump['host']}:~/.ssh/{chosen}", local_dest
     ])
     os.chmod(local_dest, 0o600)
+
+    # FIX PROBLEMA 1: corrige ownership do PEM recém-baixado e do diretório .ssh
+    # O scp pode ter criado o arquivo como root se o processo ainda tiver UID 0
+    _fix_ownership(local_dest)
+    _fix_ownership(LOCAL_SSH)
 
     config.setdefault("pem_by_server", {})[server_key] = chosen
     with open(CONFIG_FILE, "w") as f: json.dump(config, f, indent=4)
@@ -326,6 +314,17 @@ def get_jump_password(jump: dict, breadcrumb: str) -> str:
 def clear_jump_password(jump: dict) -> None:
     vault_key = f"jump:{jump['user']}@{jump['host']}"
     delete_secret(vault_key)
+
+# ─── Normaliza root path ─────────────────────────────────────────
+def normalize_root(root: str) -> str:
+    """FIX PROBLEMA 3: garante que o root path comece com '/'
+    para o SSH FS não interpretar como relativo ao home do usuário."""
+    if not root:
+        return "/"
+    root = root.strip()
+    if not root.startswith("/"):
+        root = "/" + root
+    return root
 
 # ─── Main ───────────────────────────────────────────────────────
 def main():
@@ -403,7 +402,8 @@ def main():
             sys.exit(1)
         u, h  = raw.split("@", 1)
         path  = safe_input(f"  {C.LABEL}Path Remoto:{C.RESET}  ").strip()
-        server = {"alias": alias, "host": h, "user": u, "root": path}
+        # FIX PROBLEMA 3: normaliza na hora de salvar
+        server = {"alias": alias, "host": h, "user": u, "root": normalize_root(path)}
         config["servers"].append(server)
         with open(CONFIG_FILE, "w") as f: json.dump(config, f)
     else:
@@ -425,16 +425,15 @@ def main():
         time.sleep(2)
 
     # 5. Geração do Workspace
-    #
-    # privateKeyPath deve ser o caminho ABSOLUTO no host (WSL/Mac/Windows),
-    # pois é o VS Code / Cursor rodando no host quem lê esse arquivo —
-    # não o container. Usamos to_host_path() para a tradução correta.
-    # ────────────────────────────────────────────────────────────
     ws_dir  = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
     ws_file = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
 
     key_path_for_json = to_host_path(local_pem)
+
+    # FIX PROBLEMA 3: normaliza o root também na hora de gerar o workspace,
+    # cobrindo servidores cadastrados antes da correção (sem barra inicial)
+    server_root = normalize_root(server.get("root", "/"))
 
     ws_data = {
         "folders": [
@@ -450,7 +449,7 @@ def main():
                 "port":           TUNNEL_PORT,
                 "username":       server["user"],
                 "privateKeyPath": key_path_for_json,
-                "root":           server["root"],
+                "root":           server_root,          # FIX: sempre com '/' inicial
                 "algorithms": {
                     "serverHostKey": ["ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ssh-ed25519"],
                     "pubkey":        ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"]
@@ -462,12 +461,11 @@ def main():
     with open(ws_file, "w") as f:
         json.dump(ws_data, f, indent=4)
 
-    # Garante que o arquivo e o diretório sejam acessíveis pelo usuário do host (uid 1000)
     try:
         os.chown(ws_file, 1000, 1000)
         os.chown(ws_dir, 1000, 1000)
     except PermissionError:
-        pass  # já rodando como tunnel (1000), chown é no-op mas não quebra
+        pass
 
     display_path = to_wsl_path(ws_file)
 
