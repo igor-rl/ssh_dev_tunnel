@@ -5,7 +5,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, a
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.7.1"
+__version__ = "3.7.2"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")

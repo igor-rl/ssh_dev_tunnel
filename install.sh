@@ -29,7 +29,13 @@ warn() { echo -e "  ${WARN}⚠  $1${NC}"; }
 info() { echo -e "  ${DIM}$1${NC}"; }
 
 IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
-VOLUME_NAME="ssh_dev_tunnel_data"
+
+# ─── Diretório de dados (coincide com o volume do compose e o
+#     HOST_PROJECT_PATH esperado pelo código Python)
+# Python faz: HOST_PROJECT_PATH + "/.dev_tunnel"
+# Logo: DATA_DIR = $HOME/.dev_tunnel
+#       HOST_PROJECT_PATH = $HOME
+DATA_DIR="$HOME/.dev_tunnel"
 
 # ─── Limpa buffer de stdin ───────────────────────────────────────
 while read -r -t 0; do read -r; done
@@ -108,6 +114,8 @@ PYEOF
 }
 
 # ─── Bloco Unix ──────────────────────────────────────────────────
+# DATA_DIR  = $HOME/.dev_tunnel        → volume montado em /app/.dev_tunnel
+# HOST_PROJECT_PATH = $HOME            → Python concatena "/.dev_tunnel" internamente
 build_tunnel_block_unix() {
   cat << 'SHELLBLOCK'
 # >>> ssh_dev_tunnel begin <<<
@@ -119,12 +127,12 @@ tunnel() {
       *) shift ;;
     esac
   done
-  local DATA_DIR="$HOME/.dev_tunnel_config"
+  local DATA_DIR="$HOME/.dev_tunnel"
   mkdir -p "$DATA_DIR"
   docker run -it --rm --pull always \
     -p "${PORT}:${PORT}" \
-    -v "$DATA_DIR":/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$DATA_DIR" \
+    -v "$DATA_DIR":/app/.dev_tunnel \
+    -e HOST_PROJECT_PATH="$HOME" \
     ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
 }
 # >>> ssh_dev_tunnel end <<<
@@ -132,6 +140,7 @@ SHELLBLOCK
 }
 
 # ─── Bloco Windows (Git Bash / MSYS) ────────────────────────────
+# Idem ao Unix, mas com winpty para compatibilidade com PTY no Windows
 build_tunnel_block_windows() {
   cat << 'SHELLBLOCK'
 # >>> ssh_dev_tunnel begin <<<
@@ -143,12 +152,12 @@ tunnel() {
       *) shift ;;
     esac
   done
-  local DATA_DIR="$HOME/.dev_tunnel_config"
+  local DATA_DIR="$HOME/.dev_tunnel"
   mkdir -p "$DATA_DIR"
   winpty docker run -it --rm --pull always \
     -p "${PORT}:${PORT}" \
-    -v "$DATA_DIR":/home/tunnel/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$DATA_DIR" \
+    -v "$DATA_DIR":/app/.dev_tunnel \
+    -e HOST_PROJECT_PATH="$HOME" \
     ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
 }
 # >>> ssh_dev_tunnel end <<<
@@ -173,7 +182,7 @@ if [[ "$CHOICE" == "Instalar" ]]; then
 
   header "Docker"
   echo ""
-  info "Os dados serão salvos em: \$HOME/.dev_tunnel_config/"
+  info "Os dados serão salvos em: ~/.dev_tunnel/"
   info "Persistem entre atualizações e reinstalações."
   echo ""
 
@@ -210,16 +219,16 @@ elif [[ "$CHOICE" == "Desinstalar" ]]; then
   done
 
   echo ""
-  warn "Deseja apagar também os dados salvos? (~/.dev_tunnel_config)"
+  warn "Deseja apagar também os dados salvos? (~/.dev_tunnel)"
   echo -e "  ${DIM}Contém: servidores, chaves PEM e vault de senhas${NC}\n"
   echo -e "$DIV"
   echo -e "  ${BOLD}${WARN}Apagar dados? (s/N)${NC}  \c"
   read -r response </dev/tty
   if [[ "$response" =~ ^([sS])$ ]]; then
-    rm -rf "$HOME/.dev_tunnel_config"
-    ok "Diretório ~/.dev_tunnel_config removido."
+    rm -rf "$HOME/.dev_tunnel"
+    ok "Diretório ~/.dev_tunnel removido."
   else
-    info "Dados mantidos em ~/.dev_tunnel_config"
+    info "Dados mantidos em ~/.dev_tunnel"
   fi
 
   echo ""

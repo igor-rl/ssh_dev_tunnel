@@ -123,18 +123,20 @@ echo ""
 echo -e "$DIV"
 echo ""
 warn "Deseja apagar também os servidores e chaves PEM salvos?"
-echo -e "\n  ${DIM}~/.dev_tunnel_config/  e  ~/.dev_tunnel/${NC}\n"
+echo -e "\n  ${DIM}Contém: servidores, chaves PEM e vault de senhas${NC}"
+echo -e "  ${DIM}~/.dev_tunnel/${NC}\n"
 echo -e "$DIV"
 echo -e "  ${BOLD}${WARN}Apagar configurações? (s/N)${NC}  \c"
 read -r response </dev/tty
 
 if [[ "$response" =~ ^([sS])$ ]]; then
   echo ""
-  rm -rf ~/.dev_tunnel_config ~/.dev_tunnel
+  # Remove também o diretório legado (~/.dev_tunnel_config) caso ainda exista
+  rm -rf "$HOME/.dev_tunnel" "$HOME/.dev_tunnel_config"
   ok "Configurações e chaves removidas."
 else
   echo ""
-  info "Configurações mantidas em ~/.dev_tunnel_config"
+  info "Dados mantidos em ~/.dev_tunnel"
 fi
 
 # ─── Conclusão ───────────────────────────────────────────────────
