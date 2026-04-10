@@ -5,7 +5,7 @@ import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, a
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.7"
+__version__ = "3.7.1"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -97,13 +97,13 @@ if TUNNEL_PORT != args.port:
 def _load_vault() -> dict:
     if not os.path.exists(VAULT_FILE):
         return {}
+    # _fix_ownership separado do try/except: erros de chown nunca devem
+    # impedir a leitura nem ser silenciados junto com erros de JSON.
+    _fix_ownership(VAULT_FILE)
     try:
-        # FIX PROBLEMA 2: garante que o vault seja legível pelo usuário atual
-        # mesmo que tenha sido criado originalmente como root
-        _fix_ownership(VAULT_FILE)
         with open(VAULT_FILE, 'r') as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError):
         return {}
 
 def _save_vault(vault: dict) -> None:
@@ -173,27 +173,62 @@ def safe_input(prompt: str, prefill: str = "") -> str:
 def safe_getpass(prompt: str) -> str:
     """getpass com suporte a setas esquerda/direita, Home, End, Backspace e
     Delete. Os caracteres digitados NÃO são exibidos (modo senha).
-    Ctrl+C aborta. Ctrl+U limpa o campo."""
+    Ctrl+C aborta. Ctrl+U limpa o campo.
+
+    Estratégia de redraw:
+      - O prompt é escrito UMA vez, antes do loop.
+      - A cada tecla, apagamos apenas os asteriscos (não o prompt) usando
+        \033[<n>D para recuar + \033[K para apagar até o fim da linha.
+      - Isso evita o \r/\033[2K que causava scroll/newline em PTYs do Docker.
+    """
     fd  = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
 
-    # Coloca o terminal em modo raw para capturar cada tecla individualmente
-    tty.setraw(fd)
+    buf: list[str] = []
+    pos: int       = 0
 
-    buf: list[str] = []   # caracteres da senha
-    pos: int       = 0    # posição do cursor dentro de buf
-
+    # Escreve o prompt ANTES do setraw para que o terminal ainda esteja em
+    # modo normal e não interprete os bytes de outra forma.
     sys.stdout.write(prompt)
     sys.stdout.flush()
 
+    # Só agora entra em modo raw — a partir daqui cada byte chega imediatamente.
+    tty.setraw(fd)
+
+    def _stars_len() -> int:
+        return len(buf)
+
     def _redraw() -> None:
-        """Redesenha o campo inteiro (asteriscos) e reposiciona o cursor."""
+        """Redesenha apenas a parte dos asteriscos, sem tocar no prompt.
+
+        Sequência:
+          1. Se já há asteriscos na tela, recua o cursor até o primeiro deles.
+          2. Apaga do cursor até o fim da linha (\033[K).
+          3. Reescreve os asteriscos.
+          4. Recua o cursor até a posição lógica (pos).
+        """
+        n = _stars_len()
+        # Calcula quantos asteriscos estão na tela agora (antes de reescrever).
+        # Como só chamamos _redraw após mudar buf/pos, usamos len(buf) diretamente.
+        chars_on_screen = n  # após a modificação já é o valor correto
+
+        # Recua até o início dos asteriscos (quantos caracteres o cursor avançou
+        # desde o fim do prompt — que é sempre chars_on_screen_before, mas como
+        # nunca deixamos lixo, simplesmente recuamos até o col logo após o prompt).
+        # Usamos \033[<n>D apenas se houver algo para recuar.
+        # Para calcular o quanto recuar: o cursor está em pos (lógico) dentro dos
+        # asteriscos, então precisamos recuar `pos` posições para chegar ao início.
+        if pos > 0:
+            sys.stdout.write(f"\033[{pos}D")
+        # Apaga do cursor até o fim da linha
+        sys.stdout.write("\033[K")
+        # Reescreve todos os asteriscos
         masked = "*" * len(buf)
-        # move para o início do campo, apaga até o fim, reimprime
-        sys.stdout.write(f"\r{prompt}{masked}\033[K")
-        # recua o cursor até a posição correta
-        if pos < len(buf):
-            sys.stdout.write(f"\033[{len(buf) - pos}D")
+        sys.stdout.write(masked)
+        # Reposiciona o cursor na posição lógica correta
+        chars_after = len(buf) - pos
+        if chars_after > 0:
+            sys.stdout.write(f"\033[{chars_after}D")
         sys.stdout.flush()
 
     try:
@@ -202,8 +237,9 @@ def safe_getpass(prompt: str) -> str:
 
             # ── Ctrl+C ──────────────────────────────────────────
             if ch == b'\x03':
-                termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 sys.stdout.write("\n")
+                sys.stdout.flush()
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
                 abort()
 
             # ── Enter ───────────────────────────────────────────
