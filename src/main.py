@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
-import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, argparse
+import json, os, sys, subprocess, socket, time, getpass, tty, termios, base64, argparse, readline
 
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.6.31xxx"
+__version__ = "3.7"
 
 # ─── Configuração de Argumentos (CLI) ───────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -150,17 +150,141 @@ def abort(msg="Cancelado."):
     print(f"\n\n  {C.DIM}{msg}{C.RESET}\n")
     sys.exit(0)
 
-def safe_input(prompt):
+def safe_input(prompt: str, prefill: str = "") -> str:
+    """input() com suporte completo a navegação pelo teclado (setas, Home, End,
+    Backspace, Delete) via GNU readline. Ctrl+C aborta normalmente."""
+    # readline só funciona quando stdin é um tty real
+    if not sys.stdin.isatty():
+        try:
+            return input(prompt)
+        except KeyboardInterrupt:
+            abort()
+
+    # prefill permite pre-popular o campo (útil para edição futura)
+    if prefill:
+        readline.set_startup_hook(lambda: readline.insert_text(prefill))
     try:
         return input(prompt)
     except KeyboardInterrupt:
         abort()
+    finally:
+        readline.set_startup_hook()
 
-def safe_getpass(prompt):
+def safe_getpass(prompt: str) -> str:
+    """getpass com suporte a setas esquerda/direita, Home, End, Backspace e
+    Delete. Os caracteres digitados NÃO são exibidos (modo senha).
+    Ctrl+C aborta. Ctrl+U limpa o campo."""
+    fd  = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+
+    # Coloca o terminal em modo raw para capturar cada tecla individualmente
+    tty.setraw(fd)
+
+    buf: list[str] = []   # caracteres da senha
+    pos: int       = 0    # posição do cursor dentro de buf
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+
+    def _redraw() -> None:
+        """Redesenha o campo inteiro (asteriscos) e reposiciona o cursor."""
+        masked = "*" * len(buf)
+        # move para o início do campo, apaga até o fim, reimprime
+        sys.stdout.write(f"\r{prompt}{masked}\033[K")
+        # recua o cursor até a posição correta
+        if pos < len(buf):
+            sys.stdout.write(f"\033[{len(buf) - pos}D")
+        sys.stdout.flush()
+
     try:
-        return getpass.getpass(prompt)
-    except KeyboardInterrupt:
-        abort()
+        while True:
+            ch = os.read(fd, 1)
+
+            # ── Ctrl+C ──────────────────────────────────────────
+            if ch == b'\x03':
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                sys.stdout.write("\n")
+                abort()
+
+            # ── Enter ───────────────────────────────────────────
+            elif ch in (b'\r', b'\n'):
+                break
+
+            # ── Ctrl+U — limpa o campo ──────────────────────────
+            elif ch == b'\x15':
+                buf.clear()
+                pos = 0
+                _redraw()
+
+            # ── Backspace ───────────────────────────────────────
+            elif ch in (b'\x7f', b'\x08'):
+                if pos > 0:
+                    buf.pop(pos - 1)
+                    pos -= 1
+                    _redraw()
+
+            # ── Sequências de escape (setas, Home, End, Delete) ─
+            elif ch == b'\x1b':
+                seq = os.read(fd, 1)
+                if seq == b'[':
+                    seq2 = os.read(fd, 1)
+
+                    # seta esquerda
+                    if seq2 == b'D':
+                        if pos > 0:
+                            pos -= 1
+                            sys.stdout.write("\033[1D")
+                            sys.stdout.flush()
+
+                    # seta direita
+                    elif seq2 == b'C':
+                        if pos < len(buf):
+                            pos += 1
+                            sys.stdout.write("\033[1C")
+                            sys.stdout.flush()
+
+                    # Home  (^[[H  ou  ^[[1~)
+                    elif seq2 in (b'H', b'1'):
+                        if seq2 == b'1':
+                            os.read(fd, 1)   # consome o '~'
+                        if pos > 0:
+                            sys.stdout.write(f"\033[{pos}D")
+                            sys.stdout.flush()
+                        pos = 0
+
+                    # End   (^[[F  ou  ^[[4~)
+                    elif seq2 in (b'F', b'4'):
+                        if seq2 == b'4':
+                            os.read(fd, 1)   # consome o '~'
+                        if pos < len(buf):
+                            sys.stdout.write(f"\033[{len(buf) - pos}C")
+                            sys.stdout.flush()
+                        pos = len(buf)
+
+                    # Delete  (^[[3~)
+                    elif seq2 == b'3':
+                        os.read(fd, 1)       # consome o '~'
+                        if pos < len(buf):
+                            buf.pop(pos)
+                            _redraw()
+
+                    # setas cima/baixo — ignoradas no getpass
+                    elif seq2 in (b'A', b'B'):
+                        pass
+
+            # ── Caractere imprimível ─────────────────────────────
+            elif ch >= b' ':
+                char = ch.decode("utf-8", errors="replace")
+                buf.insert(pos, char)
+                pos += 1
+                _redraw()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    return "".join(buf)
 
 # ─── Helpers ────────────────────────────────────────────────────
 def getch():
