@@ -2,10 +2,11 @@
 workspace.py — Geração de .code-workspace e gerenciamento de entradas salvas.
 
 FIXES:
-- SSH FS conecta como root diretamente (username: root), eliminando
-  o erro NoPermissions ao criar/editar arquivos via interface do editor.
-- Remove verificação do comando cursor/code no PATH do container.
-- Senha salva automaticamente.
+- Cursor/VSCode: usa "remoteUser": "root" no SSH FS config para resolver permissão
+  ao criar arquivos via interface do editor (NoPermissions FileSystemError).
+- Editor: remove verificação do comando cursor/code no PATH — confia que o binário
+  existe no host e exibe o comando direto para o usuário rodar.
+- Senha: salva automaticamente, sem perguntar ao usuário.
 """
 import json, os, time
 from src.config import WS_ROOT, CONFIG_FILE, to_host_path, to_wsl_path, normalize_root, save_config
@@ -16,18 +17,6 @@ from src.ui import C, DIV, draw_header, interactive_menu, safe_input, abort
 def write_workspace(ws_file: str, server: dict, local_pem: str, tunnel_port: int) -> None:
     key_path_for_json = to_host_path(local_pem)
     server_root = normalize_root(server.get("root", "/"))
-
-    # FIX: conecta como root para ter permissão total de leitura/escrita.
-    # Requer que /root/.ssh/authorized_keys exista no servidor remoto
-    # com a mesma chave pública do usuário original (ex: opc).
-    # Setup no servidor (uma vez só):
-    #   sudo mkdir -p /root/.ssh
-    #   sudo cp ~/.ssh/authorized_keys /root/.ssh/authorized_keys
-    #   sudo chmod 700 /root/.ssh && sudo chmod 600 /root/.ssh/authorized_keys
-    #   sudo grep -i PermitRootLogin /etc/ssh/sshd_config
-    #   # se necessário: sudo sed -i 's/^.*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
-    #   sudo systemctl restart sshd
-    ssh_username = "root"
 
     ws_data = {
         "folders": [
@@ -41,10 +30,13 @@ def write_workspace(ws_file: str, server: dict, local_pem: str, tunnel_port: int
                 "name":           server["alias"],
                 "host":           "127.0.0.1",
                 "port":           tunnel_port,
-                "username":       ssh_username,
+                "username":       server["user"],
                 "privateKeyPath": key_path_for_json,
                 "root":           server_root,
-                "sudo":           False,
+                # FIX: conecta como root para ter permissão de criar/editar
+                # arquivos via interface do Cursor/VSCode sem erro NoPermissions.
+                "sudo":           True,
+                "remoteUser":     "root",
                 "algorithms": {
                     "serverHostKey": ["ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ssh-ed25519"],
                     "pubkey":        ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"]
@@ -73,8 +65,16 @@ def workspace_path_for(server: dict) -> tuple[str, str]:
 
 
 # ─── Instrução para abrir editor ─────────────────────────────────
+# FIX: remove verificação se 'cursor' está no PATH — o container não tem
+# acesso ao PATH do host. Exibe o comando direto para o usuário rodar.
+# O usuário confirmou que `cursor <path>` funciona no seu ambiente.
+
 def show_editor_instructions(display_path: str, breadcrumb: str,
                               draw_header_fn) -> None:
+    """
+    Exibe os comandos que o usuário deve rodar no terminal do HOST
+    para abrir o workspace no editor desejado.
+    """
     draw_header_fn(breadcrumb)
     print(f"\n  {C.BOLD}{C.INFO}ABRIR WORKSPACE NO EDITOR{C.RESET}\n")
     print(f"  {C.LABEL}Caminho do workspace:{C.RESET}")
@@ -113,6 +113,10 @@ def delete_workspace_entry(config: dict, alias: str) -> None:
 
 
 def workspace_crud_screen(config: dict, draw_header_fn) -> dict | None:
+    """
+    Tela inicial: lista workspaces salvos.
+    Retorna o workspace escolhido (dict) ou None para fluxo de novo workspace.
+    """
     ws_list = load_workspaces(config)
 
     while True:

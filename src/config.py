@@ -6,7 +6,7 @@ import json, os
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.7.7"
+__version__ = "3.7.8"
 
 # ─── Estrutura de Diretórios ─────────────────────────────────────
 # HOST_PROJECT_PATH é injetado pelo docker run (ex: $HOME do host).
