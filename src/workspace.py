@@ -1,10 +1,12 @@
 """
 workspace.py — Geração de .code-workspace e gerenciamento de entradas salvas.
 
-BUG FIX (editor): o container não tem acesso ao PATH do host, então
-'cursor' e 'code' nunca serão encontrados via subprocess dentro do container.
-A solução é exibir o comando que o usuário deve rodar no terminal do HOST,
-em vez de tentar lançar o editor de dentro do container.
+FIXES:
+- Cursor/VSCode: usa "remoteUser": "root" no SSH FS config para resolver permissão
+  ao criar arquivos via interface do editor (NoPermissions FileSystemError).
+- Editor: remove verificação do comando cursor/code no PATH — confia que o binário
+  existe no host e exibe o comando direto para o usuário rodar.
+- Senha: salva automaticamente, sem perguntar ao usuário.
 """
 import json, os, time
 from src.config import WS_ROOT, CONFIG_FILE, to_host_path, to_wsl_path, normalize_root, save_config
@@ -31,7 +33,10 @@ def write_workspace(ws_file: str, server: dict, local_pem: str, tunnel_port: int
                 "username":       server["user"],
                 "privateKeyPath": key_path_for_json,
                 "root":           server_root,
+                # FIX: conecta como root para ter permissão de criar/editar
+                # arquivos via interface do Cursor/VSCode sem erro NoPermissions.
                 "sudo":           True,
+                "remoteUser":     "root",
                 "algorithms": {
                     "serverHostKey": ["ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ssh-ed25519"],
                     "pubkey":        ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"]
@@ -59,10 +64,10 @@ def workspace_path_for(server: dict) -> tuple[str, str]:
     return ws_file, display_path
 
 
-# ─── Instrução para abrir editor (BUG FIX) ───────────────────────
-# O container não tem acesso aos binários do host (cursor, code).
-# Em vez de tentar executá-los e falhar, exibimos o comando para o usuário
-# rodar no terminal do HOST após o túnel estar ativo.
+# ─── Instrução para abrir editor ─────────────────────────────────
+# FIX: remove verificação se 'cursor' está no PATH — o container não tem
+# acesso ao PATH do host. Exibe o comando direto para o usuário rodar.
+# O usuário confirmou que `cursor <path>` funciona no seu ambiente.
 
 def show_editor_instructions(display_path: str, breadcrumb: str,
                               draw_header_fn) -> None:

@@ -1,5 +1,9 @@
 """
 session.py — Fluxo de sessão: autenticação, PEM, workspace e bloqueio do túnel.
+
+FIX: senha é salva automaticamente após autenticação bem-sucedida,
+sem perguntar ao usuário ("Salvar senha?"). Estratégia de baixa segurança
+aceita pelo usuário para garantir recuperação da senha entre sessões.
 """
 import sys, time
 from src.ui import C, DIV, draw_header, ask_yes_no, safe_input
@@ -15,9 +19,7 @@ from src.workspace import (
 def get_jump_password(jump: dict, breadcrumb: str, draw_header_fn) -> str:
     """
     Retorna a senha salva silenciosamente, ou solicita ao usuário.
-
-    BUG FIX: a senha só é pedida novamente se NÃO estiver no vault.
-    Quando está salva, é retornada sem nenhum prompt.
+    FIX: quando não há senha salva, pede e salva automaticamente.
     """
     from src.ui import safe_getpass  # importação local para evitar circular
 
@@ -34,10 +36,10 @@ def get_jump_password(jump: dict, breadcrumb: str, draw_header_fn) -> str:
         from src.ui import abort
         abort("Senha não pode ser vazia.")
 
-    if ask_yes_no("Salvar senha para próximas sessões?"):
-        save_secret(vault_key, pw)
-        print(f"  {C.SUCCESS}✔  Senha salva.{C.RESET}")
-        time.sleep(0.5)
+    # FIX: salva automaticamente, sem perguntar
+    save_secret(vault_key, pw)
+    print(f"  {C.SUCCESS}✔  Senha salva localmente.{C.RESET}")
+    time.sleep(0.4)
 
     return pw
 
@@ -77,10 +79,6 @@ def authenticate(jump: dict, breadcrumb: str, draw_header_fn) -> str:
 def _wait_for_enter_then_close(proc, server: dict, display_path: str,
                                 jump_breadcrumb: str, tunnel_port: int,
                                 draw_header_fn) -> None:
-    """
-    Exibe status do túnel ativo + caminho do workspace e aguarda ENTER.
-    BUG FIX (mensagem final): exibe o display_path claramente.
-    """
     draw_header_fn(jump_breadcrumb, server)
 
     print(f"\n  {C.SUCCESS}{C.BOLD}● TÚNEL ATIVO{C.RESET}  "
