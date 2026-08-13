@@ -8,7 +8,11 @@ aceita pelo usuário para garantir recuperação da senha entre sessões.
 import sys, time
 from src.ui import C, DIV, draw_header, ask_yes_no, safe_input
 from src.vault import get_secret, save_secret, delete_secret, vault_key_for_jump
-from src.tunnel import test_ssh, choose_pem_for_server, start_tunnel, is_port_open
+from src.tunnel import (
+    test_ssh, choose_pem_for_server, start_tunnel, is_port_open,
+    register_active_tunnel, unregister_active_tunnel,
+)
+from src.config import normalize_root
 from src.workspace import (
     write_workspace, workspace_path_for,
     show_editor_instructions, save_workspace_entry,
@@ -96,12 +100,15 @@ def _wait_for_enter_then_close(proc, server: dict, display_path: str,
     print(DIV())
     print(f"\n  {C.LABEL}Workspace:{C.RESET}  {C.ACCENT}{display_path}{C.RESET}\n")
     print(DIV())
+    print(f"\n  {C.DIM}Dica: use 'tunnel-explore' em outro terminal para investigar"
+          f" arquivos remotos com o Claude Code (somente leitura).{C.RESET}\n")
 
     try:
         safe_input(f"\n  {C.WARN}Pressione ENTER para encerrar o túnel...{C.RESET}")
     finally:
         if hasattr(proc, "terminate"):
             proc.terminate()
+        unregister_active_tunnel(tunnel_port)
 
 
 # ─── Fluxo completo de uma sessão ────────────────────────────────
@@ -141,6 +148,16 @@ def run_session(jump: dict, server: dict, config: dict,
     #    SSH FS assim que abre o workspace (senão dá ECONNREFUSED na porta).
     proc = start_tunnel(jump, session_pw, server, tunnel_port)
     _wait_tunnel_ready(tunnel_port)
+
+    register_active_tunnel({
+        "alias": server["alias"],
+        "route": f"{jump['user']}@{jump['host']}  →  {server['user']}@{server['host']}",
+        "port":  tunnel_port,
+        "pem":   local_pem,
+        "user":  server["user"],
+        "host":  server["host"],
+        "root":  normalize_root(server.get("root", "/")),
+    })
 
     # 6. Abre o editor (túnel já escutando nesse ponto)
     show_editor_instructions(display_path, jump_breadcrumb, draw_header_fn)

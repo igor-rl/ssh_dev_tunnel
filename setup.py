@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ssh-dev-tunnel",
-    version="3.9.3",
+    version="3.9.5",
     author="Igor Lage",
     packages=find_packages(),
     python_requires=">=3.10",
@@ -16,6 +16,7 @@ setup(
     entry_points={
         'console_scripts': [
             'tunnel=src.main:main',
+            'tunnel-explore=src.explore:main',
         ],
     },
 )

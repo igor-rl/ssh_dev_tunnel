@@ -1,8 +1,10 @@
 """
 tunnel.py — Operações SSH: teste de conexão, cópia de PEM, túnel reverso.
 """
-import os, socket, subprocess, time
-from src.config import LOCAL_SSH, CONFIG_FILE, save_config
+import json, os, socket, subprocess, time
+from src.config import LOCAL_SSH, CONFIG_FILE, DATA_DIR, save_config
+
+ACTIVE_TUNNELS_FILE = os.path.join(DATA_DIR, "active_tunnels.json")
 
 
 # ─── Porta disponível ────────────────────────────────────────────
@@ -23,6 +25,43 @@ def is_port_open(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+# ─── Registro de túneis ativos (para o `tunnel-explore`) ─────────
+def _load_raw_active_tunnels() -> list[dict]:
+    if not os.path.exists(ACTIVE_TUNNELS_FILE):
+        return []
+    try:
+        with open(ACTIVE_TUNNELS_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_active_tunnels(tunnels: list[dict]) -> None:
+    tmp = ACTIVE_TUNNELS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(tunnels, f, indent=4)
+    os.replace(tmp, ACTIVE_TUNNELS_FILE)
+
+
+def register_active_tunnel(entry: dict) -> None:
+    tunnels = [t for t in _load_raw_active_tunnels() if t.get("port") != entry["port"]]
+    tunnels.append(entry)
+    _save_active_tunnels(tunnels)
+
+
+def unregister_active_tunnel(port: int) -> None:
+    tunnels = [t for t in _load_raw_active_tunnels() if t.get("port") != port]
+    _save_active_tunnels(tunnels)
+
+
+def list_active_tunnels() -> list[dict]:
+    """Lista túneis registrados cuja porta ainda está de fato aberta (filtra entradas obsoletas)."""
+    live = [t for t in _load_raw_active_tunnels() if is_port_open(t.get("port", -1))]
+    if len(live) != len(_load_raw_active_tunnels()):
+        _save_active_tunnels(live)
+    return live
 
 
 # ─── Teste de autenticação SSH ───────────────────────────────────
