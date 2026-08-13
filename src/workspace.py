@@ -4,11 +4,12 @@ workspace.py — Geração de .code-workspace e gerenciamento de entradas salvas
 FIXES:
 - Cursor/VSCode: usa "remoteUser": "root" no SSH FS config para resolver permissão
   ao criar arquivos via interface do editor (NoPermissions FileSystemError).
-- Editor: remove verificação do comando cursor/code no PATH — confia que o binário
-  existe no host e exibe o comando direto para o usuário rodar.
+- Editor: como a ferramenta roda direto na máquina do usuário (sem container),
+  abre o workspace automaticamente via `cursor`/`code` quando encontrado no PATH;
+  cai para instrução manual só se nenhum dos dois estiver disponível.
 - Senha: salva automaticamente, sem perguntar ao usuário.
 """
-import json, os, time
+import json, os, shutil, subprocess, time
 from src.config import WS_ROOT, CONFIG_FILE, normalize_root, save_config
 from src.ui import C, DIV, draw_header, interactive_menu, safe_input, abort
 
@@ -66,19 +67,37 @@ def workspace_path_for(server: dict) -> tuple[str, str]:
 def show_editor_instructions(display_path: str, breadcrumb: str,
                               draw_header_fn) -> None:
     """
-    Exibe os comandos que o usuário deve rodar no terminal do HOST
-    para abrir o workspace no editor desejado.
+    Abre o workspace automaticamente no Cursor/VS Code se algum dos dois
+    estiver no PATH; senão, mostra o comando para o usuário rodar manualmente.
     """
     draw_header_fn(breadcrumb)
     print(f"\n  {C.BOLD}{C.INFO}ABRIR WORKSPACE NO EDITOR{C.RESET}\n")
     print(f"  {C.LABEL}Caminho do workspace:{C.RESET}")
     print(f"  {C.ACCENT}{display_path}{C.RESET}\n")
     print(f"{DIV()}")
-    print(f"  {C.DIM}Rode um dos comandos abaixo no terminal do HOST:{C.RESET}\n")
-    print(f"  {C.LABEL}Cursor :{C.RESET}  {C.ACCENT}cursor \"{display_path}\"{C.RESET}")
-    print(f"  {C.LABEL}VS Code:{C.RESET}  {C.ACCENT}code   \"{display_path}\"{C.RESET}\n")
+
+    editor = shutil.which("cursor") or shutil.which("code")
+    if editor:
+        is_cursor = "cursor" in os.path.basename(editor)
+        name = "Cursor" if is_cursor else "VS Code"
+        # Cursor tem modos ambíguos: "editor" força IDE em vez do agent/chat;
+        # "--classic" desativa o dashboard "glass" novo (Cursor 2.0) que abre
+        # em vez do editor clássico direto. O `code` do VS Code não tem isso.
+        args = [editor, "editor", "--classic", display_path] if is_cursor else [editor, display_path]
+        try:
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"  {C.SUCCESS}✔  Abrindo no {name}...{C.RESET}\n")
+        except OSError:
+            manual = " ".join(args[:-1] + [f'"{display_path}"'])
+            print(f"  {C.WARN}⚠  Não consegui abrir automaticamente. Rode manualmente:{C.RESET}\n")
+            print(f"  {C.ACCENT}{manual}{C.RESET}\n")
+    else:
+        print(f"  {C.DIM}Nenhum editor (cursor/code) encontrado no PATH. Rode manualmente:{C.RESET}\n")
+        print(f"  {C.LABEL}Cursor :{C.RESET}  {C.ACCENT}cursor editor --classic \"{display_path}\"{C.RESET}")
+        print(f"  {C.LABEL}VS Code:{C.RESET}  {C.ACCENT}code                    \"{display_path}\"{C.RESET}\n")
+
     print(f"{DIV()}")
-    print(f"  {C.DIM}Pressione ENTER para continuar e abrir o túnel...{C.RESET}  ", end="", flush=True)
+    print(f"  {C.DIM}Túnel já está ativo. Pressione ENTER para continuar...{C.RESET}  ", end="", flush=True)
     try:
         input()
     except KeyboardInterrupt:

@@ -68,7 +68,9 @@ remove_legacy_docker_shortcut() {
     changed=true
   fi
 
-  $changed && ok "Atalho Docker legado removido de $(basename "$profile")"
+  if [ "$changed" = true ]; then
+    ok "Atalho Docker legado removido de $(basename "$profile")"
+  fi
 }
 
 for prof in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do

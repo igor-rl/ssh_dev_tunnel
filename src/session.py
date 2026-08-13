@@ -75,6 +75,16 @@ def authenticate(jump: dict, breadcrumb: str, draw_header_fn) -> str:
     return session_pw
 
 
+# ─── Espera o túnel aceitar conexões ─────────────────────────────
+def _wait_tunnel_ready(tunnel_port: int, timeout: float = 8.0) -> None:
+    """Espera a porta do túnel abrir antes de seguir (evita ECONNREFUSED no SSH FS)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if is_port_open(tunnel_port):
+            return
+        time.sleep(0.3)
+
+
 # ─── Bloqueio do túnel ───────────────────────────────────────────
 def _wait_for_enter_then_close(proc, server: dict, display_path: str,
                                 jump_breadcrumb: str, tunnel_port: int,
@@ -127,11 +137,15 @@ def run_session(jump: dict, server: dict, config: dict,
     }
     save_workspace_entry(config, ws_entry)
 
-    # 5. Instruções do editor (antes de travar o terminal com o túnel)
+    # 5. Túnel — precisa estar de pé ANTES de abrir o editor, que conecta via
+    #    SSH FS assim que abre o workspace (senão dá ECONNREFUSED na porta).
+    proc = start_tunnel(jump, session_pw, server, tunnel_port)
+    _wait_tunnel_ready(tunnel_port)
+
+    # 6. Abre o editor (túnel já escutando nesse ponto)
     show_editor_instructions(display_path, jump_breadcrumb, draw_header_fn)
 
-    # 6. Túnel
-    proc = start_tunnel(jump, session_pw, server, tunnel_port)
+    # 7. Bloqueia até ENTER para encerrar o túnel
     _wait_for_enter_then_close(proc, server, display_path,
                                 jump_breadcrumb, tunnel_port, draw_header_fn)
 
