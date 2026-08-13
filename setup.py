@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ssh-dev-tunnel",
-    version="3.9.0",
+    version="3.9.1",
     author="Igor Lage",
     packages=find_packages(),
     python_requires=">=3.10",
