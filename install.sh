@@ -34,6 +34,40 @@ REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
 # ─── Limpa buffer de stdin ───────────────────────────────────────
 while read -r -t 0; do read -r; done
 
+# ─── Remove atalho/função Docker de instalações antigas (< v3.9.0) ──
+SENTINEL_BEGIN="# >>> ssh_dev_tunnel begin <<<"
+SENTINEL_END="# >>> ssh_dev_tunnel end <<<"
+
+remove_legacy_docker_shortcut() {
+  local profile="$1"
+  [ -f "$profile" ] || return
+  local changed=false
+
+  if grep -qF "$SENTINEL_BEGIN" "$profile" 2>/dev/null; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
+    else
+      sed -i "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
+    fi
+    changed=true
+  fi
+
+  if grep -q 'alias tunnel=' "$profile" 2>/dev/null; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' '/alias tunnel=/d' "$profile"
+    else
+      sed -i '/alias tunnel=/d' "$profile"
+    fi
+    changed=true
+  fi
+
+  $changed && ok "Atalho Docker legado removido de $(basename "$profile")"
+}
+
+for prof in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+  remove_legacy_docker_shortcut "$prof"
+done
+
 # ─── Localiza um Python 3.10+ ────────────────────────────────────
 find_python() {
   for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
