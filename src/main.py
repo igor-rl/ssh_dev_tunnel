@@ -76,7 +76,34 @@ def check_for_update() -> None:
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
 parser.add_argument('--port', '-p', type=int, default=2222,
                     help='Porta local preferencial para o túnel (Padrão: 2222).')
+parser.add_argument('--ia', nargs='?', const='auto', choices=['claude', 'gemini', 'auto'],
+                    help='Abre o recurso IA (Claude Code/Gemini). Sem valor, detecta/pergunta.')
+parser.add_argument('--terminal', action='store_true',
+                    help='Abre um shell SSH direto no servidor (substitui o antigo cmd_tunnel).')
+parser.add_argument('--cursor', action='store_true', help='Abre o workspace no Cursor.')
+parser.add_argument('--vscode', action='store_true', help='Abre o workspace no VS Code.')
 args = parser.parse_args()
+
+if args.cursor and args.vscode:
+    print(f"\n  {C.ERROR}Use --cursor OU --vscode, não os dois.{C.RESET}\n")
+    sys.exit(1)
+
+_resource_flags = sum([args.terminal, args.ia is not None, args.cursor or args.vscode])
+if _resource_flags > 1:
+    print(f"\n  {C.ERROR}Use apenas um recurso por vez: --terminal, --ia ou --cursor/--vscode.{C.RESET}\n")
+    sys.exit(1)
+
+if args.terminal:
+    RESOURCE = "terminal"
+elif args.ia is not None:
+    RESOURCE = "ia"
+elif args.cursor or args.vscode:
+    RESOURCE = "ide"
+else:
+    RESOURCE = None  # decide interativamente no menu
+
+EDITOR_PREF = "cursor" if args.cursor else ("vscode" if args.vscode else None)
+IA_PREF = args.ia
 
 TUNNEL_PORT = find_available_port(args.port)
 if TUNNEL_PORT != args.port:
@@ -100,11 +127,24 @@ def main() -> None:
     check_for_update()
     config = load_config()
 
-    # ── Tela Inicial: CRUD de Workspaces ────────────────────────
+    # ── Recurso: IDE / IA / Terminal (via flag, ou perguntado aqui) ──
+    resource = RESOURCE
+    if resource is None:
+        resource_options = [
+            "IDE       │  Cursor / VS Code",
+            "IA        │  Claude Code / Gemini (somente leitura)",
+            "Terminal  │  shell SSH direto",
+        ]
+        r_idx = interactive_menu(resource_options, "Qual recurso você quer usar?",
+                                 draw_header_fn=header)
+        resource = ["ide", "ia", "terminal"][r_idx]
+
+    # ── Tela Inicial: Conexões Salvas ─────────────────────────────
     saved_ws = workspace_crud_screen(config, draw_header_fn=header)
 
     if saved_ws:
-        reconnect_saved_workspace(saved_ws, config, TUNNEL_PORT, header, menu_fn)
+        reconnect_saved_workspace(saved_ws, config, TUNNEL_PORT, header, menu_fn,
+                                   resource=resource, editor_pref=EDITOR_PREF, ia_pref=IA_PREF)
         return
 
     # ── Fluxo manual: novo workspace ─────────────────────────────
@@ -149,7 +189,8 @@ def main() -> None:
         server = svs[idx]
 
     # 3. Sessão completa
-    run_session(jump, server, config, TUNNEL_PORT, header, menu_fn)
+    run_session(jump, server, config, TUNNEL_PORT, header, menu_fn,
+                resource=resource, editor_pref=EDITOR_PREF, ia_pref=IA_PREF)
 
 
 if __name__ == "__main__":

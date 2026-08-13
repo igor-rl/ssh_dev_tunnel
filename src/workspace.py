@@ -42,7 +42,12 @@ def write_workspace(ws_file: str, server: dict, local_pem: str, tunnel_port: int
                     "serverHostKey": ["ssh-rsa", "ssh-dss", "ecdsa-sha2-nistp256", "ssh-ed25519"],
                     "pubkey":        ["ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"]
                 }
-            }]
+            }],
+            # FIX: arquivos remotos estão em ISO-8859-1 (Latin-1); sem isso o
+            # editor tenta ler como UTF-8 e acentos/caracteres especiais
+            # aparecem corrompidos (ex: "pre�o" em vez de "preço").
+            "files.encoding":          "iso88591",
+            "files.autoGuessEncoding": False,
         }
     }
 
@@ -60,15 +65,15 @@ def workspace_path_for(server: dict) -> tuple[str, str]:
 
 
 # ─── Instrução para abrir editor ─────────────────────────────────
-# FIX: remove verificação se 'cursor' está no PATH — o container não tem
-# acesso ao PATH do host. Exibe o comando direto para o usuário rodar.
-# O usuário confirmou que `cursor <path>` funciona no seu ambiente.
-
 def show_editor_instructions(display_path: str, breadcrumb: str,
-                              draw_header_fn) -> None:
+                              draw_header_fn, editor_pref: str | None = None,
+                              menu_fn=None) -> None:
     """
-    Abre o workspace automaticamente no Cursor/VS Code se algum dos dois
-    estiver no PATH; senão, mostra o comando para o usuário rodar manualmente.
+    Abre o workspace automaticamente no editor certo:
+    - editor_pref='cursor'/'vscode' força esse editor (via --cursor/--vscode);
+    - com só um editor instalado, usa esse;
+    - com os dois instalados e sem preferência, pergunta (se menu_fn dado);
+    - sem nenhum editor no PATH, mostra o comando para rodar manualmente.
     """
     draw_header_fn(breadcrumb)
     print(f"\n  {C.BOLD}{C.INFO}ABRIR WORKSPACE NO EDITOR{C.RESET}\n")
@@ -76,14 +81,33 @@ def show_editor_instructions(display_path: str, breadcrumb: str,
     print(f"  {C.ACCENT}{display_path}{C.RESET}\n")
     print(f"{DIV()}")
 
-    editor = shutil.which("cursor") or shutil.which("code")
-    if editor:
-        is_cursor = "cursor" in os.path.basename(editor)
-        name = "Cursor" if is_cursor else "VS Code"
+    cursor_bin = shutil.which("cursor")
+    code_bin   = shutil.which("code")
+    available  = [k for k, b in (("cursor", cursor_bin), ("vscode", code_bin)) if b]
+
+    chosen_key = None
+    if editor_pref in available:
+        chosen_key = editor_pref
+    elif len(available) == 1:
+        chosen_key = available[0]
+    elif len(available) > 1 and menu_fn:
+        labels = {"cursor": "Cursor", "vscode": "VS Code"}
+        idx = menu_fn([labels[k] for k in available], "Qual editor abrir?", breadcrumb)
+        chosen_key = available[idx]
+    elif available:
+        chosen_key = available[0]
+
+    if chosen_key == "cursor":
         # Cursor tem modos ambíguos: "editor" força IDE em vez do agent/chat;
         # "--classic" desativa o dashboard "glass" novo (Cursor 2.0) que abre
-        # em vez do editor clássico direto. O `code` do VS Code não tem isso.
-        args = [editor, "editor", "--classic", display_path] if is_cursor else [editor, display_path]
+        # em vez do editor clássico direto.
+        name, args = "Cursor", [cursor_bin, "editor", "--classic", display_path]
+    elif chosen_key == "vscode":
+        name, args = "VS Code", [code_bin, display_path]
+    else:
+        name, args = None, None
+
+    if args:
         try:
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"  {C.SUCCESS}✔  Abrindo no {name}...{C.RESET}\n")
@@ -127,18 +151,19 @@ def delete_workspace_entry(config: dict, alias: str) -> None:
 
 def workspace_crud_screen(config: dict, draw_header_fn) -> dict | None:
     """
-    Tela inicial: lista workspaces salvos.
-    Retorna o workspace escolhido (dict) ou None para fluxo de novo workspace.
+    Tela inicial: lista conexões salvas (jump host + servidor), reutilizadas
+    por qualquer um dos recursos (IDE/IA/Terminal).
+    Retorna a conexão escolhida (dict) ou None para fluxo de nova conexão.
     """
     ws_list = load_workspaces(config)
 
     while True:
-        draw_header_fn("Workspaces Salvos")
+        draw_header_fn("Conexões Salvas")
 
         if not ws_list:
-            print(f"\n  {C.DIM}Nenhum workspace salvo ainda.{C.RESET}\n")
-            opts = ["+ Novo Workspace (configurar manualmente)", "Sair"]
-            idx  = interactive_menu(opts, "Workspaces", "Início",
+            print(f"\n  {C.DIM}Nenhuma conexão salva ainda.{C.RESET}\n")
+            opts = ["+ Nova Conexão (configurar manualmente)", "Sair"]
+            idx  = interactive_menu(opts, "Conexões", "Início",
                                     draw_header_fn=draw_header_fn)
             if idx == 0:
                 return None
@@ -148,11 +173,11 @@ def workspace_crud_screen(config: dict, draw_header_fn) -> dict | None:
             f"{w['alias'].ljust(16)}  │  {w.get('route', '')}"
             for w in ws_list
         ]
-        labels += ["+ Novo Workspace", "⊘  Remover Workspace", "Sair"]
+        labels += ["+ Nova Conexão", "⊘  Remover Conexão", "Sair"]
 
         idx = interactive_menu(
             labels,
-            "Selecione um Workspace",
+            "Selecione uma Conexão",
             "Início",
             footer_hint="ENTER  conectar    Q  sair",
             draw_header_fn=draw_header_fn,
@@ -166,7 +191,7 @@ def workspace_crud_screen(config: dict, draw_header_fn) -> dict | None:
             return None
         elif idx == n + 1:
             rm_labels = [w["alias"] for w in ws_list] + ["← Cancelar"]
-            rm_idx    = interactive_menu(rm_labels, "Remover — qual workspace?", "Início",
+            rm_idx    = interactive_menu(rm_labels, "Remover — qual conexão?", "Início",
                                          draw_header_fn=draw_header_fn)
             if rm_idx < len(ws_list):
                 chosen_alias = ws_list[rm_idx]["alias"]
@@ -176,7 +201,7 @@ def workspace_crud_screen(config: dict, draw_header_fn) -> dict | None:
                     if w["alias"] != chosen_alias
                 ]
                 ws_list = load_workspaces(config)
-                print(f"\n  {C.SUCCESS}✔  Workspace '{chosen_alias}' removido.{C.RESET}")
+                print(f"\n  {C.SUCCESS}✔  Conexão '{chosen_alias}' removida.{C.RESET}")
                 time.sleep(0.8)
         else:
             abort()

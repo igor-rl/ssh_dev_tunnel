@@ -1,6 +1,6 @@
 # 🚀 SSH DEV TUNNEL (Precifica)
 
-Utilitário de linha de comando para automação de túneis SSH reversos. Acesse servidores internos através de Jump Hosts de forma segura, com integração nativa para Cursor e VS Code.
+Utilitário de linha de comando para automação de túneis SSH reversos. Acesse servidores internos através de Jump Hosts de forma segura, com três formas de trabalhar sobre a mesma conexão: **IDE** (Cursor/VS Code), **IA** (Claude Code/Gemini, somente leitura) e **Terminal** (shell SSH direto).
 
 ---
 
@@ -38,21 +38,35 @@ Com a instalação concluída, o comando `tunnel` estará disponível globalment
 tunnel
 ```
 
+Sem flags, o primeiro menu pergunta **qual recurso usar**: IDE, IA ou Terminal. Depois disso, escolha uma conexão salva ou configure uma nova (Jump Host + Servidor) — o fluxo de autenticação, chave `.pem` e túnel é o mesmo para os três.
+
+Você também pode pular direto pro recurso desejado via flag:
+
+```bash
+tunnel --cursor            # abre no Cursor
+tunnel --vscode            # abre no VS Code
+tunnel --ia                # abre IA (detecta/pergunta Claude Code ou Gemini)
+tunnel --ia claude         # abre direto no Claude Code
+tunnel --ia gemini         # abre direto no Gemini CLI
+tunnel --terminal          # abre um shell SSH direto no servidor
+tunnel --port 2223         # porta local customizada (funciona com qualquer recurso acima)
+```
+
 ---
 
 ## 🔄 Fluxo de Trabalho
 
-**1. Menu Interativo:** Selecione seu Jump Host e o Servidor de Destino (IP Interno).
+**1. Recurso:** Escolha IDE, IA ou Terminal (ou pule direto com a flag correspondente).
 
-**2. Senha Única:** Insira a senha uma vez; ela será usada para sincronizar a chave `.pem` e abrir o túnel.
+**2. Conexão:** Selecione uma conexão salva, ou configure Jump Host + Servidor de Destino (IP Interno) na primeira vez.
 
-**3. Abrir no Editor:** O script gerará o comando de abertura do Workspace. Copie e cole no terminal:
+**3. Senha Única:** Insira a senha uma vez; ela é salva com segurança (Keychain do sistema, ou arquivo criptografado como fallback) e reaproveitada nas próximas conexões — sincroniza a chave `.pem` e abre o túnel automaticamente.
 
-```bash
-cursor "/Users/seu-user/caminho/projeto.code-workspace"
-```
+**4a. Modo IDE:** o Cursor ou VS Code abre sozinho, já conectado ao servidor via SSH FS. Se os dois estiverem instalados e nenhuma flag (`--cursor`/`--vscode`) for passada, o app pergunta qual usar.
 
-**4. Conectar SSH FS:** No editor: `Ctrl+Shift+P` → `SSH FS: Add as Workspace folder` → Selecione o alias criado.
+**4b. Modo IA:** abre o Claude Code ou Gemini CLI numa sessão configurada para leitura remota (via SSH, sem mount) — a IA investiga, explica bugs e sugere código; você aplica as mudanças manualmente no editor. Também dá pra rodar `tunnel-explore` em outro terminal para reaproveitar uma conexão que já esteja aberta em modo IDE.
+
+**4c. Modo Terminal:** abre um shell SSH interativo direto no servidor, pra você rodar comandos você mesmo. Ao sair (`exit` ou Ctrl+D), o túnel fecha automaticamente.
 
 ---
 

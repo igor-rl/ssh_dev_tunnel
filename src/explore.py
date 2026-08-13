@@ -33,11 +33,16 @@ Conexão ativa: `{route}` (túnel SSH na porta local {port}).
 Não há mount local. Para ler qualquer arquivo/pasta remota, rode via Bash
 (as flags -o HostKeyAlgorithms/PubkeyAcceptedKeyTypes são necessárias porque
 servidores mais antigos só oferecem ssh-rsa, que o SSH moderno desativa por
-padrão — sem elas a conexão falha com "no matching host key type found"):
+padrão — sem elas a conexão falha com "no matching host key type found").
 
-    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "cat '<caminho remoto>'"
+IMPORTANTE: os arquivos remotos estão em ISO-8859-1 (Latin-1), não UTF-8.
+Sempre que o comando mostrar conteúdo de arquivo (cat/grep), passe a saída
+por `iconv -f ISO-8859-1 -t UTF-8` — sem isso, acentos e caracteres especiais
+aparecem corrompidos (ex: "pre�o" em vez de "preço"):
+
+    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "cat '<caminho remoto>'" | iconv -f ISO-8859-1 -t UTF-8
     ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "find '<pasta>' -iname '*termo*'"
-    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "grep -rn 'termo' '<pasta>' --include='*.php'"
+    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "grep -rn 'termo' '<pasta>' --include='*.php'" | iconv -f ISO-8859-1 -t UTF-8
     ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "wc -l '<arquivo>'"
 
 Raiz remota configurada: `{root}`
@@ -92,6 +97,43 @@ def _ensure_context_files(project_dir: str, tunnel: dict) -> None:
             f.write(content)
 
 
+# ─── Helpers reutilizáveis (usados também por `tunnel --ia`) ─────
+def prepare_context_files(tunnel: dict) -> str:
+    """Cria o project_dir (se preciso) e escreve CLAUDE.md/GEMINI.md. Retorna o project_dir."""
+    project_dir = os.path.join(EXPLORE_ROOT, tunnel["alias"])
+    os.makedirs(project_dir, exist_ok=True)
+    _ensure_context_files(project_dir, tunnel)
+    return project_dir
+
+
+def pick_agent(preferred: str | None = None, breadcrumb: str = "",
+               draw_header_fn=None) -> tuple[str | None, str | None]:
+    """
+    Retorna (label, binário) do agente de IA a usar.
+    `preferred`: None/'auto' pergunta se houver mais de um; 'claude'/'gemini'
+    força esse binário (se instalado, senão cai para a escolha normal).
+    Retorna (None, None) se nenhuma CLI de IA estiver instalada.
+    """
+    available = [(label, b, f) for label, b, f in AGENTS if shutil.which(b)]
+    if not available:
+        return None, None
+
+    if preferred and preferred != "auto":
+        match = next(((label, b) for label, b, _ in available if b == preferred), None)
+        if match:
+            return match
+
+    if len(available) == 1:
+        label, b, _ = available[0]
+        return label, b
+
+    options = [label for label, _, _ in available]
+    idx = interactive_menu(options, "Qual assistente usar?", breadcrumb,
+                            draw_header_fn=draw_header_fn)
+    label, b, _ = available[idx]
+    return label, b
+
+
 def main() -> None:
     _draw_header()
 
@@ -101,30 +143,19 @@ def main() -> None:
         print(f"  {C.DIM}Abra um com 'tunnel' em outro terminal antes de rodar isso.{C.RESET}\n")
         sys.exit(1)
 
-    available_agents = [(label, bin_name, ctx_file) for label, bin_name, ctx_file in AGENTS
-                         if shutil.which(bin_name)]
-    if not available_agents:
-        print(f"\n  {C.ERROR}✘  Nenhuma CLI de IA encontrada no PATH (claude/gemini).{C.RESET}\n")
-        sys.exit(1)
-
     # ─── 1. Escolhe a conexão ──────────────────────────────────────
     options = [f"{t['alias'].ljust(16)}  │  {t['route']}" for t in tunnels]
     idx = interactive_menu(options, "Qual conexão acessar?", "",
                             draw_header_fn=_draw_header)
     chosen = tunnels[idx]
 
-    # ─── 2. Escolhe a CLI de IA (se houver mais de uma disponível) ─
-    if len(available_agents) == 1:
-        agent_label, agent_bin, _ = available_agents[0]
-    else:
-        agent_options = [label for label, _, _ in available_agents]
-        a_idx = interactive_menu(agent_options, "Qual assistente usar?", chosen["alias"],
-                                  draw_header_fn=_draw_header)
-        agent_label, agent_bin, _ = available_agents[a_idx]
+    # ─── 2. Escolhe a CLI de IA ─────────────────────────────────────
+    agent_label, agent_bin = pick_agent(breadcrumb=chosen["alias"], draw_header_fn=_draw_header)
+    if not agent_bin:
+        print(f"\n  {C.ERROR}✘  Nenhuma CLI de IA encontrada no PATH (claude/gemini).{C.RESET}\n")
+        sys.exit(1)
 
-    project_dir = os.path.join(EXPLORE_ROOT, chosen["alias"])
-    os.makedirs(project_dir, exist_ok=True)
-    _ensure_context_files(project_dir, chosen)
+    project_dir = prepare_context_files(chosen)
 
     print(f"\n  {C.SUCCESS}✔  Pronto. Sessão de leitura para {chosen['alias']} configurada.{C.RESET}")
     print(f"  {C.DIM}Abrindo o {agent_label}...{C.RESET}\n")
