@@ -9,13 +9,13 @@ FIXES:
 - Senha: salva automaticamente, sem perguntar ao usuário.
 """
 import json, os, time
-from src.config import WS_ROOT, CONFIG_FILE, to_host_path, to_wsl_path, normalize_root, save_config
+from src.config import WS_ROOT, CONFIG_FILE, normalize_root, save_config
 from src.ui import C, DIV, draw_header, interactive_menu, safe_input, abort
 
 
 # ─── Geração do arquivo .code-workspace ──────────────────────────
 def write_workspace(ws_file: str, server: dict, local_pem: str, tunnel_port: int) -> None:
-    key_path_for_json = to_host_path(local_pem)
+    key_path_for_json = os.path.abspath(local_pem)
     server_root = normalize_root(server.get("root", "/"))
 
     ws_data = {
@@ -48,19 +48,13 @@ def write_workspace(ws_file: str, server: dict, local_pem: str, tunnel_port: int
     with open(ws_file, "w") as f:
         json.dump(ws_data, f, indent=4)
 
-    try:
-        os.chown(ws_file, 1000, 1000)
-        os.chown(os.path.dirname(ws_file), 1000, 1000)
-    except PermissionError:
-        pass
-
 
 def workspace_path_for(server: dict) -> tuple[str, str]:
-    """Retorna (ws_file_interno, display_path_no_host)."""
+    """Retorna (ws_file, display_path) — ambos o mesmo caminho absoluto local."""
     ws_dir  = os.path.join(WS_ROOT, server["alias"])
     os.makedirs(ws_dir, mode=0o755, exist_ok=True)
     ws_file      = os.path.join(ws_dir, f"{server['alias']}.code-workspace")
-    display_path = to_wsl_path(ws_file)
+    display_path = os.path.abspath(ws_file)
     return ws_file, display_path
 
 

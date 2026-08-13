@@ -15,7 +15,7 @@ mkdir -p ~/projects/ssh && cd ~/projects/ssh
 
 ## ⚡ Instalação Única (Recomendado)
 
-Configure a ferramenta globalmente no seu Mac ou Windows com apenas um comando. O instalador detectará automaticamente se você possui Docker ou prefere a Instalação Local:
+Configure a ferramenta globalmente no seu Mac ou Windows (WSL/Git Bash) com apenas um comando. Requer **Python 3.10+** e **sshpass** instalados:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/install.sh -o install.sh && bash install.sh && rm install.sh
@@ -56,23 +56,23 @@ cursor "/Users/seu-user/caminho/projeto.code-workspace"
 
 ---
 
-## 📋 Métodos de Instalação
+## 📋 Pré-requisitos
 
-O instalador inteligente oferecerá as opções baseadas no seu ambiente:
-
-- **Opção 1 — Via Docker (Melhor Experiência):** Requer apenas o Docker Desktop rodando. É a opção mais limpa, pois isola todas as dependências (como `sshpass`) dentro de um container.
-- **Opção 2 — Via Python (Local):** Requer Python 3.10+ e `sshpass` instalado manualmente no seu sistema operacional.
+- **Python 3.10+**
+- **sshpass** (`brew install hudochenkov/sshpass/sshpass` no macOS, `apt install sshpass` no Linux, WSL no Windows)
+- Recomendado: **pipx** (`brew install pipx` / `apt install pipx`) — o instalador usa automaticamente se disponível, para manter as dependências isoladas.
 
 ---
 
 ## 📁 Persistência de Dados
 
-Seus servidores cadastrados e chaves PEM são mantidos localmente para persistirem entre atualizações:
+Seus servidores cadastrados, chaves PEM e senhas salvas ficam em:
 
-| Método de Uso | Localização dos Dados (Host) |
-|---------------|------------------------------|
-| Docker        | `~/.dev_tunnel_config/`      |
-| Local         | `~/.dev_tunnel/.data/`       |
+```
+~/.dev_tunnel/.data/
+```
+
+Persistem entre atualizações e reinstalações.
 
 ---
 
@@ -88,8 +88,8 @@ curl -fsSL https://raw.githubusercontent.com/igor-rl/ssh_dev_tunnel/main/uninsta
 
 ## 🛠️ Solução de Problemas
 
-- **Porta 2222 ocupada:** O túnel utiliza a porta `2222`. Certifique-se de que não há outra instância rodando (`docker ps`).
-- **Comando 'tunnel' não encontrado:** Verifique se você reiniciou o terminal após a instalação para carregar o novo `alias`.
+- **Porta 2222 ocupada:** o `tunnel` detecta automaticamente e usa a próxima porta livre.
+- **Comando 'tunnel' não encontrado:** reinicie o terminal após a instalação; se persistir, confirme que o diretório de binários do `pipx`/`pip --user` está no seu `PATH`.
 
 <br/>
 

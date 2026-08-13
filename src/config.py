@@ -6,18 +6,10 @@ import json, os
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "3.7.8"
+__version__ = "3.9.0"
 
 # ─── Estrutura de Diretórios ─────────────────────────────────────
-# HOST_PROJECT_PATH é injetado pelo docker run (ex: $HOME do host).
-# O Python concatena "/.dev_tunnel" para compor o caminho no host.
-HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", "") + "/.dev_tunnel"
-
-_CANDIDATE_A = "/home/tunnel/.dev_tunnel"
-_CANDIDATE_B = "/app/.dev_tunnel"
-
-BASE_DIR = _CANDIDATE_A if os.path.exists(_CANDIDATE_A) else _CANDIDATE_B
-
+BASE_DIR       = os.path.expanduser("~/.dev_tunnel")
 DATA_DIR       = os.path.join(BASE_DIR, ".data")
 CONFIG_FILE    = os.path.join(DATA_DIR, "servers.json")
 WS_ROOT        = os.path.join(BASE_DIR, "workspaces")
@@ -26,27 +18,6 @@ PASSWORDS_FILE = os.path.join(DATA_DIR, ".passwords")
 
 for _d in [BASE_DIR, DATA_DIR, LOCAL_SSH, WS_ROOT]:
     os.makedirs(_d, mode=0o755, exist_ok=True)
-
-
-# ─── Conversor de caminhos ───────────────────────────────────────
-def to_host_path(container_path: str) -> str:
-    """Converte caminho interno do container para caminho no host."""
-    if not HOST_PROJECT_PATH:
-        return container_path
-    abs_internal = os.path.abspath(container_path)
-    if abs_internal.startswith(BASE_DIR):
-        rel = os.path.relpath(abs_internal, BASE_DIR)
-        return os.path.join(HOST_PROJECT_PATH, rel).replace("\\", "/")
-    return container_path
-
-
-def to_wsl_path(internal_path: str) -> str:
-    """Alias de to_host_path para uso em exibição de workspace."""
-    abs_internal = os.path.abspath(internal_path)
-    if HOST_PROJECT_PATH and abs_internal.startswith(BASE_DIR):
-        rel = os.path.relpath(abs_internal, BASE_DIR)
-        return os.path.join(HOST_PROJECT_PATH, rel)
-    return abs_internal
 
 
 def normalize_root(root: str) -> str:

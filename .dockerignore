@@ -1,8 +1,0 @@
-.git
-.github
-__pycache__
-*.pyc
-node_modules
-.DS_Store
-*.code-workspace
-DEPLOY.md

@@ -38,11 +38,10 @@ def tag(label, value, color=C.INFO):
 def draw_header(breadcrumb: str = "", server: dict | None = None,
                 version: str = "", company: str = "", tunnel_port: int = 0) -> None:
     os.system("clear")
-    mode = "DOCKER" if os.environ.get("HOST_PROJECT_PATH") else "LOCAL"
     d = DIV()
     print(d)
     print(f"  {C.BOLD}{C.INFO}{company.upper()}{C.RESET}  {C.DIVIDER}│{C.RESET}  "
-          f"{C.ACCENT}{C.BOLD}SSH DEV TUNNEL{C.RESET}  {C.DIM}v{version}  [{mode}]{C.RESET}")
+          f"{C.ACCENT}{C.BOLD}SSH DEV TUNNEL{C.RESET}  {C.DIM}v{version}{C.RESET}")
     print(d)
     if server:
         print(tag("SESSÃO",  server.get('alias', 'NOVO').upper(), C.ACCENT))
@@ -114,8 +113,12 @@ def safe_getpass(prompt: str) -> str:
     tty.setraw(fd)
 
     def _redraw() -> None:
-        if pos > 0:
-            sys.stdout.write(f"\033[{pos}D")
+        # Sempre volta ao início do buffer: usar `pos` aqui (posição já
+        # atualizada) subestima o deslocamento após um backspace, deixando
+        # um caractere "fantasma" na tela. Um valor propositalmente maior
+        # que qualquer senha real garante o retorno à coluna 0 (o terminal
+        # limita o cursor à margem esquerda).
+        sys.stdout.write("\033[999D")
         sys.stdout.write("\033[K")
         masked = "*" * len(buf)
         sys.stdout.write(masked)

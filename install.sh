@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # ─── Paleta ─────────────────────────────────────────────────────
 ACCENT='\033[38;5;75m'
@@ -28,29 +29,23 @@ err()  { echo -e "  ${ERROR}✘  $1${NC}"; }
 warn() { echo -e "  ${WARN}⚠  $1${NC}"; }
 info() { echo -e "  ${DIM}$1${NC}"; }
 
-IMAGE="ghcr.io/igor-rl/ssh_dev_tunnel:latest"
-
-# ─── Diretório de dados (coincide com o volume do compose e o
-#     HOST_PROJECT_PATH esperado pelo código Python)
-# Python faz: HOST_PROJECT_PATH + "/.dev_tunnel"
-# Logo: DATA_DIR = $HOME/.dev_tunnel
-#       HOST_PROJECT_PATH = $HOME
-DATA_DIR="$HOME/.dev_tunnel"
+REPO_URL="https://github.com/igor-rl/ssh_dev_tunnel.git"
 
 # ─── Limpa buffer de stdin ───────────────────────────────────────
 while read -r -t 0; do read -r; done
 
-# ─── Verifica Docker obrigatório ─────────────────────────────────
-if ! command -v docker &>/dev/null; then
-  header "Erro"
-  echo ""
-  err "Docker não encontrado."
-  echo ""
-  info "Instale o Docker Desktop antes de continuar:"
-  info "  https://www.docker.com/products/docker-desktop"
-  echo ""
-  exit 1
-fi
+# ─── Localiza um Python 3.10+ ────────────────────────────────────
+find_python() {
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" &>/dev/null; then
+      if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        echo "$candidate"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
 
 # ─── Menu ────────────────────────────────────────────────────────
 options=("Instalar" "Desinstalar" "Sair")
@@ -83,130 +78,64 @@ done
 
 CHOICE="${options[$selected]}"
 
-# ─── Sentinelas ──────────────────────────────────────────────────
-SENTINEL_BEGIN="# >>> ssh_dev_tunnel begin <<<"
-SENTINEL_END="# >>> ssh_dev_tunnel end <<<"
-
-remove_tunnel_block() {
-  local profile="$1"
-  [ -f "$profile" ] || return
-  if grep -qF "$SENTINEL_BEGIN" "$profile" 2>/dev/null; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
-    else
-      sed -i "/$SENTINEL_BEGIN/,/$SENTINEL_END/d" "$profile"
-    fi
-    ok "Bloco anterior removido de $(basename "$profile")"
-  else
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/alias tunnel=/d' "$profile" 2>/dev/null
-    else
-      sed -i '/alias tunnel=/d' "$profile" 2>/dev/null
-    fi
-    python3 - "$profile" <<'PYEOF' 2>/dev/null
-import sys, re
-path = sys.argv[1]
-with open(path, 'r') as f: content = f.read()
-cleaned = re.sub(r'\ntunnel\(\) \{[^}]*\}', '', content, flags=re.DOTALL)
-with open(path, 'w') as f: f.write(cleaned)
-PYEOF
-  fi
-}
-
-# ─── Bloco Unix ──────────────────────────────────────────────────
-# DATA_DIR  = $HOME/.dev_tunnel        → volume montado em /app/.dev_tunnel
-# HOST_PROJECT_PATH = $HOME            → Python concatena "/.dev_tunnel" internamente
-build_tunnel_block_unix() {
-  cat << 'SHELLBLOCK'
-# >>> ssh_dev_tunnel begin <<<
-tunnel() {
-  local PORT=2222
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port|-p) PORT="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  local DATA_DIR="$HOME/.dev_tunnel"
-  mkdir -p "$DATA_DIR"
-  docker run -it --rm --pull always \
-    -p "${PORT}:${PORT}" \
-    -v "$DATA_DIR":/app/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$HOME" \
-    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
-}
-# >>> ssh_dev_tunnel end <<<
-SHELLBLOCK
-}
-
-# ─── Bloco Windows (Git Bash / MSYS) ────────────────────────────
-# Idem ao Unix, mas com winpty para compatibilidade com PTY no Windows
-build_tunnel_block_windows() {
-  cat << 'SHELLBLOCK'
-# >>> ssh_dev_tunnel begin <<<
-tunnel() {
-  local PORT=2222
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port|-p) PORT="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  local DATA_DIR="$HOME/.dev_tunnel"
-  mkdir -p "$DATA_DIR"
-  winpty docker run -it --rm --pull always \
-    -p "${PORT}:${PORT}" \
-    -v "$DATA_DIR":/app/.dev_tunnel \
-    -e HOST_PROJECT_PATH="$HOME" \
-    ghcr.io/igor-rl/ssh_dev_tunnel:latest --port "$PORT"
-}
-# >>> ssh_dev_tunnel end <<<
-SHELLBLOCK
-}
-
-# ─── Escreve o bloco em um profile ───────────────────────────────
-inject_into_profile() {
-  local profile="$1"
-  touch "$profile"
-  remove_tunnel_block "$profile"
-  if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    build_tunnel_block_windows >> "$profile"
-  else
-    build_tunnel_block_unix >> "$profile"
-  fi
-  ok "Função 'tunnel' adicionada em $profile"
-}
-
 # ════════════════════════════════════════════════════════════════
 if [[ "$CHOICE" == "Instalar" ]]; then
 
-  header "Docker"
+  header "Pré-requisitos"
   echo ""
-  info "Os dados serão salvos em: ~/.dev_tunnel/"
+
+  PYTHON_BIN=$(find_python) || {
+    err "Python 3.10+ não encontrado."
+    echo ""
+    info "Instale o Python 3.10 ou superior antes de continuar:"
+    info "  macOS:   brew install python@3.12"
+    info "  Linux:   sudo apt install python3.12"
+    info "  Windows: https://www.python.org/downloads/"
+    echo ""
+    exit 1
+  }
+  ok "Python detectado: $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1))"
+
+  if ! command -v sshpass &>/dev/null; then
+    err "sshpass não encontrado."
+    echo ""
+    info "Instale o sshpass antes de continuar:"
+    info "  macOS:   brew install hudochenkov/sshpass/sshpass"
+    info "  Linux:   sudo apt install sshpass"
+    info "  Windows: use WSL com sshpass instalado"
+    echo ""
+    exit 1
+  fi
+  ok "sshpass encontrado."
+
+  echo ""
+  info "Seus servidores, chaves PEM e senhas serão salvos em: ~/.dev_tunnel/"
   info "Persistem entre atualizações e reinstalações."
   echo ""
 
-  PROFILES_WRITTEN=0
+  header "Instalando"
+  echo ""
 
-  if [ -f "$HOME/.bashrc" ] || command -v bash &>/dev/null; then
-    inject_into_profile "$HOME/.bashrc"
-    PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
+  if command -v pipx &>/dev/null; then
+    ok "pipx encontrado — instalando de forma isolada."
+    pipx install --force "git+${REPO_URL}"
+    pipx ensurepath
+  else
+    warn "pipx não encontrado — recomendado para evitar conflitos com outros pacotes Python."
+    info "  Instale com: brew install pipx   (ou) sudo apt install pipx"
+    echo ""
+    echo -e "  ${WARN}Instalar mesmo assim via pip --user? (s/N)${NC}  \c"
+    read -r resp </dev/tty
+    if [[ ! "$resp" =~ ^([sS])$ ]]; then
+      echo -e "\n  ${DIM}Instalação cancelada. Instale o pipx e rode este script de novo.${NC}\n"
+      exit 0
+    fi
+    "$PYTHON_BIN" -m pip install --user --upgrade "git+${REPO_URL}" \
+      || "$PYTHON_BIN" -m pip install --user --break-system-packages --upgrade "git+${REPO_URL}"
   fi
 
-  if [ -f "$HOME/.zshrc" ] || command -v zsh &>/dev/null; then
-    inject_into_profile "$HOME/.zshrc"
-    PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
-  fi
-
-  if [[ "$OSTYPE" == "darwin"* ]] && [ ! -f "$HOME/.bashrc" ]; then
-    inject_into_profile "$HOME/.bash_profile"
-    PROFILES_WRITTEN=$((PROFILES_WRITTEN + 1))
-  fi
-
-  if [ "$PROFILES_WRITTEN" -eq 0 ]; then
-    warn "Nenhum profile de shell detectado. Adicionando em ~/.bashrc como fallback."
-    inject_into_profile "$HOME/.bashrc"
-  fi
+  echo ""
+  ok "ssh-dev-tunnel instalado."
 
 # ════════════════════════════════════════════════════════════════
 elif [[ "$CHOICE" == "Desinstalar" ]]; then
@@ -214,9 +143,13 @@ elif [[ "$CHOICE" == "Desinstalar" ]]; then
   header "Desinstalação"
   echo ""
 
-  for prof in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-    remove_tunnel_block "$prof"
-  done
+  if command -v pipx &>/dev/null && pipx list --short 2>/dev/null | grep -q "^ssh-dev-tunnel "; then
+    pipx uninstall ssh-dev-tunnel && ok "Pacote removido via pipx."
+  elif command -v pip3 &>/dev/null; then
+    pip3 uninstall -y ssh-dev-tunnel 2>/dev/null \
+      && ok "Pacote removido via pip." \
+      || info "Pacote não encontrado (já removido?)."
+  fi
 
   echo ""
   warn "Deseja apagar também os dados salvos? (~/.dev_tunnel)"
@@ -232,8 +165,6 @@ elif [[ "$CHOICE" == "Desinstalar" ]]; then
   fi
 
   echo ""
-  warn "Recarregue o terminal:"
-  echo -e "       ${ACCENT}exec \$SHELL${NC}\n"
   exit 0
 
 else
@@ -244,9 +175,8 @@ fi
 # ─── Instruções Finais ───────────────────────────────────────────
 echo -e "\n$DIV"
 echo -e "\n  ${BOLD}${INFO}PRÓXIMOS PASSOS${NC}\n"
-echo -e "  ${LABEL}1.${NC}  Recarregue o terminal (em cada shell ativo):"
-echo -e "       ${ACCENT}source ~/.bashrc${NC}   ${DIM}# bash / WSL${NC}"
-echo -e "       ${ACCENT}source ~/.zshrc${NC}    ${DIM}# zsh${NC}\n"
+echo -e "  ${LABEL}1.${NC}  Recarregue o terminal (ou abra um novo):"
+echo -e "       ${ACCENT}exec \$SHELL${NC}\n"
 echo -e "  ${LABEL}2.${NC}  Uso padrão (porta 2222 ou próxima livre):"
 echo -e "       ${ACCENT}tunnel${NC}\n"
 echo -e "  ${LABEL}3.${NC}  Especificar porta:"

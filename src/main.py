@@ -2,13 +2,75 @@
 """
 main.py — Ponto de entrada. Orquestra os módulos; sem lógica de negócio aqui.
 """
-import argparse, sys, time
+import argparse, json, shutil, subprocess, sys, time, urllib.request
 
 from src.config import __version__, __company__, __author__, load_config, save_config, normalize_root
-from src.ui     import C, DIV, draw_header as _draw_header, interactive_menu, safe_input, abort
+from src.ui     import C, DIV, draw_header as _draw_header, interactive_menu, safe_input, ask_yes_no, abort
 from src.tunnel import find_available_port
 from src.workspace import workspace_crud_screen
 from src.session import reconnect_saved_workspace, run_session
+
+REPO = "igor-rl/ssh_dev_tunnel"
+
+
+# ─── Checagem de atualização ──────────────────────────────────────
+def _fetch_latest_version() -> str | None:
+    """Consulta as tags do GitHub e retorna a maior versão semântica encontrada, ou None."""
+    url = f"https://api.github.com/repos/{REPO}/tags"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ssh-dev-tunnel"})
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            tags = json.load(resp)
+    except Exception:
+        return None
+
+    versions = []
+    for t in tags:
+        name = t.get("name", "").lstrip("v")
+        parts = name.split(".")
+        if len(parts) == 3 and all(p.isdigit() for p in parts):
+            versions.append(tuple(int(p) for p in parts))
+    if not versions:
+        return None
+    return ".".join(str(p) for p in max(versions))
+
+
+def _run_upgrade() -> bool:
+    """Tenta atualizar via pipx (preferencial) ou pip. Retorna True se o comando rodou com sucesso."""
+    repo_url = f"git+https://github.com/{REPO}.git"
+
+    if shutil.which("pipx"):
+        listed = subprocess.run(["pipx", "list", "--short"], capture_output=True, text=True)
+        if "ssh-dev-tunnel" in listed.stdout:
+            result = subprocess.run(["pipx", "upgrade", "ssh-dev-tunnel"])
+            return result.returncode == 0
+        result = subprocess.run(["pipx", "install", "--force", repo_url])
+        return result.returncode == 0
+
+    result = subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--upgrade", repo_url])
+    return result.returncode == 0
+
+
+def check_for_update() -> None:
+    latest = _fetch_latest_version()
+    if not latest:
+        return
+
+    current_t = tuple(int(p) for p in __version__.split("."))
+    latest_t  = tuple(int(p) for p in latest.split("."))
+    if latest_t <= current_t:
+        return
+
+    print(f"\n  {C.WARN}⚠  Nova versão disponível: v{latest}{C.RESET}  "
+          f"{C.DIM}(atual: v{__version__}){C.RESET}")
+    if ask_yes_no("Atualizar agora?", default_no=False):
+        print(f"\n  {C.ACCENT}⟳  Atualizando...{C.RESET}\n")
+        if _run_upgrade():
+            print(f"\n  {C.SUCCESS}✔  Atualizado para v{latest}. Rode 'tunnel' novamente.{C.RESET}\n")
+        else:
+            print(f"\n  {C.ERROR}✘  Falha ao atualizar. Rode manualmente:{C.RESET}")
+            print(f"  {C.ACCENT}pipx upgrade ssh-dev-tunnel{C.RESET}\n")
+        sys.exit(0)
 
 # ─── CLI ────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="SSH Dev Tunnel")
@@ -35,6 +97,7 @@ def menu_fn(options: list[str], title: str, breadcrumb: str = "") -> int:
 
 # ─── Main ───────────────────────────────────────────────────────
 def main() -> None:
+    check_for_update()
     config = load_config()
 
     # ── Tela Inicial: CRUD de Workspaces ────────────────────────

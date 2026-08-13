@@ -25,13 +25,6 @@ def is_port_open(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _fix_ownership(path: str) -> None:
-    try:
-        os.chown(path, 1000, 1000)
-    except (PermissionError, OSError):
-        pass
-
-
 # ─── Teste de autenticação SSH ───────────────────────────────────
 def test_ssh(jump: dict, password: str) -> bool:
     cmd = [
@@ -57,7 +50,6 @@ def choose_pem_for_server(jump: dict, password: str, server: dict,
     local_path = os.path.join(LOCAL_SSH, saved_pem) if saved_pem else None
 
     if saved_pem and local_path and os.path.exists(local_path):
-        _fix_ownership(local_path)
         os.chmod(local_path, 0o600)
         return local_path, saved_pem
 
@@ -84,8 +76,6 @@ def choose_pem_for_server(jump: dict, password: str, server: dict,
         f"{jump['user']}@{jump['host']}:~/.ssh/{chosen}", local_dest
     ])
     os.chmod(local_dest, 0o600)
-    _fix_ownership(local_dest)
-    _fix_ownership(LOCAL_SSH)
 
     config.setdefault("pem_by_server", {})[server_key] = chosen
     save_config(config)

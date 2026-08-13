@@ -2,13 +2,16 @@ from setuptools import setup, find_packages
 
 setup(
     name="ssh-dev-tunnel",
-    version="3.7.8",
+    version="3.9.0",
     author="Igor Lage",
     packages=find_packages(),
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=[
-        # keyring removido: o vault agora usa base64 interno,
-        # sem dependência de sistema de chaveiro do OS.
+        # keyring: usa o Keychain/Credential Manager do SO quando disponível.
+        # cryptography: fallback (arquivo local criptografado) quando não há
+        # backend de keyring no sistema.
+        "keyring>=24",
+        "cryptography>=42",
     ],
     entry_points={
         'console_scripts': [
