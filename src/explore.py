@@ -40,10 +40,10 @@ Sempre que o comando mostrar conteúdo de arquivo (cat/grep), passe a saída
 por `iconv -f ISO-8859-1 -t UTF-8` — sem isso, acentos e caracteres especiais
 aparecem corrompidos (ex: "pre�o" em vez de "preço"):
 
-    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "cat '<caminho remoto>'" | iconv -f ISO-8859-1 -t UTF-8
-    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "find '<pasta>' -iname '*termo*'"
-    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "grep -rn 'termo' '<pasta>' --include='*.php'" | iconv -f ISO-8859-1 -t UTF-8
-    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -i {pem} {user}@127.0.0.1 "wc -l '<arquivo>'"
+    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -o StrictHostKeyChecking=no -i {pem} {user}@127.0.0.1 "cat '<caminho remoto>'" | iconv -f ISO-8859-1 -t UTF-8
+    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -o StrictHostKeyChecking=no -i {pem} {user}@127.0.0.1 "find '<pasta>' -iname '*termo*'"
+    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -o StrictHostKeyChecking=no -i {pem} {user}@127.0.0.1 "grep -rn 'termo' '<pasta>' --include='*.php'" | iconv -f ISO-8859-1 -t UTF-8
+    ssh -p {port} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -o StrictHostKeyChecking=no -i {pem} {user}@127.0.0.1 "wc -l '<arquivo>'"
 
 Raiz remota configurada: `{root}`
 

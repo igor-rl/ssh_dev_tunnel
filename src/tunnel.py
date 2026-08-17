@@ -135,8 +135,13 @@ def start_tunnel(jump: dict, password: str, server: dict, port: int) -> subproce
         "ssh", "-N",
         "-L", f"0.0.0.0:{port}:{server['host']}:22",
         f"{jump['user']}@{jump['host']}",
-        "-o", "StrictHostKeyChecking=no"
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "ExitOnForwardFailure=yes",
     ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log_path = os.path.join(DATA_DIR, "tunnel.log")
+    with open(log_path, "a") as log_file:
+        proc = subprocess.Popen(cmd, stdout=log_file, stderr=log_file)
     time.sleep(2)
     return proc

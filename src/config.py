@@ -6,7 +6,7 @@ import json, os
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
 __company__ = "Precifica"
-__version__ = "4.0.1"
+__version__ = "4.0.2"
 
 # ─── Estrutura de Diretórios ─────────────────────────────────────
 BASE_DIR       = os.path.expanduser("~/.dev_tunnel")
