@@ -71,7 +71,65 @@ Raiz remota configurada: `{root}`
 1. Cite o caminho completo do arquivo remoto e a linha.
 2. Ao final de cada resposta, resuma em 1-2 frases o que foi encontrado ou
    sugerido, e o que falta o usuário fazer (aplicar, testar).
+
+## Exceções por projeto
+As regras acima valem para os apps PHP legados. Se houver abaixo uma seção
+de exceções para este projeto, ela PREVALECE sobre as regras gerais.
 """
+
+# Exceções do app Octo (Laravel + Docker) — anexadas quando o alias contém "octo"
+OCTO_EXCEPTIONS_TEMPLATE = """
+### Exceções — app Octo (Laravel + Docker)
+
+Este projeto NÃO é um app PHP legado: é Laravel (PHP 8.2, Blade, Bootstrap)
+rodando em Docker. Estas regras substituem as gerais onde conflitarem.
+
+**Codificação: UTF-8 — NÃO use `iconv`.** Os arquivos (.php, .blade.php,
+.pm, .js, .conf) estão em UTF-8/ASCII; passar por `iconv -f ISO-8859-1`
+corrompe os acentos ("ValidaÃ§Ã£o" em vez de "Validação"). Em caso de
+dúvida sobre um arquivo específico, confira com `file -bi '<arquivo>'`.
+
+**Estrutura (raiz `{root}`):**
+- `routes/web.php` — rotas; telas autenticadas ficam no grupo
+  `middleware('authentication')->prefix('/app')`.
+- `app/Http/Controllers/`, `app/Models/`, `app/Exports/` (Laravel Excel).
+- `resources/views/` — Blade; telas estendem `layouts.app` (menu em
+  `resources/views/layouts/app.blade.php`).
+- `database/migrations/` — referência do schema das tabelas.
+- `monitoramento-octo/` — workers Perl (`lib/Octo/*.pm`, `bin/`) e
+  scrapers Node (`scraper*.js`); config e banco `pfcOcto` em
+  `monitoramento-octo/conf/octo*.conf`.
+
+**Escopo:** o projeto é pequeno (~165 arquivos, sem `vendor/` nem
+`node_modules/` no host). `grep -r` em `app/`, `routes/`, `resources/`,
+`database/` e `monitoramento-octo/lib` é permitido; exclua `.git/`.
+Use `--include` conforme o tipo: `*.php`, `*.blade.php`, `*.pm`, `*.js`.
+
+**Comandos de leitura adicionais permitidos:**
+- `git log`, `git show`, `git diff`, `git status` (o diretório é repo git).
+- `docker ps` e `docker logs --tail <n> <container>`
+  (containers: `octo-app`, `octo-nginx`, `monitoramento`, `rabbitmq`).
+- Não há `php` nem `mysql` no host: não rode `docker exec`; para consultar
+  dados do banco `pfcOcto`, peça ao usuário para rodar o SQL.
+
+**Sugestões de código:** siga o padrão Laravel do projeto — rota em
+`routes/web.php` → Controller → Model (Eloquent) → view Blade com
+`@extends('layouts.app')`. Mudança de schema = nova migration. Não
+proponha arquivos PHP soltos no estilo dos apps legados.
+
+**Deploy/teste (avise o usuário ao sugerir mudanças):**
+- Laravel (`app/`, `routes/`, `resources/`, `config/`...): o código é
+  copiado para a imagem no build (`Dockerfile.prod` faz `COPY . .`) e não
+  há `.env` no host — a mudança só vale após
+  `docker compose -f docker-compose.prod.yaml build app && docker compose -f docker-compose.prod.yaml up -d app`.
+- `monitoramento-octo/`: montado como volume (`./monitoramento-octo:/app`)
+  e fora da imagem do Laravel (`.dockerignore`) — basta reiniciar o
+  container `monitoramento`. O app Laravel NÃO enxerga esses arquivos.
+"""
+
+
+def _is_octo(tunnel: dict) -> bool:
+    return "octo" in tunnel["alias"].lower()
 
 
 def _draw_header(breadcrumb: str = "") -> None:
@@ -92,6 +150,8 @@ def _ensure_context_files(project_dir: str, tunnel: dict) -> None:
         alias=tunnel["alias"], route=tunnel["route"], port=tunnel["port"],
         pem=tunnel["pem"], user=tunnel["user"], root=tunnel["root"],
     )
+    if _is_octo(tunnel):
+        content += OCTO_EXCEPTIONS_TEMPLATE.format(root=tunnel["root"])
     for _, _, filename in AGENTS:
         with open(os.path.join(project_dir, filename), "w") as f:
             f.write(content)

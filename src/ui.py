@@ -187,14 +187,16 @@ def ask_yes_no(question: str, default_no: bool = True) -> bool:
     _flush_stdin()
     ch = getch()
     print()
+    if ch in ('\r', '\n'):
+        return not default_no
     return ch.lower() == 's'
 
 
 # ─── Menu interativo ─────────────────────────────────────────────
 def interactive_menu(options: list[str], title: str,
                      breadcrumb: str = "", footer_hint: str | None = None,
-                     draw_header_fn=None) -> int:
-    idx = 0
+                     draw_header_fn=None, initial: int = 0) -> int:
+    idx = initial if 0 <= initial < len(options) else 0
     while True:
         if draw_header_fn:
             draw_header_fn(breadcrumb)
