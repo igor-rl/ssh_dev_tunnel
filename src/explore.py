@@ -18,6 +18,7 @@ from src.tunnel import list_active_tunnels
 from src.ui import C, DIV, interactive_menu
 
 EXPLORE_ROOT = os.path.expanduser("~/.dev_tunnel/explore")
+AI_CONTEXT_ROOT = os.path.expanduser("~/.dev_tunnel/ai-context")
 
 # ─── CLIs de IA suportadas ────────────────────────────────────────
 # (nome exibido, binário no PATH, arquivo de contexto que essa CLI lê)
@@ -71,7 +72,32 @@ Raiz remota configurada: `{root}`
 1. Cite o caminho completo do arquivo remoto e a linha.
 2. Ao final de cada resposta, resuma em 1-2 frases o que foi encontrado ou
    sugerido, e o que falta o usuário fazer (aplicar, testar).
+
+## Exceções por projeto
+As regras acima valem para os apps PHP legados. Se houver abaixo uma seção
+de exceções para este projeto, ela PREVALECE sobre as regras gerais.
 """
+
+def _custom_context(tunnel: dict) -> str:
+    """
+    Contexto extra de IA, mantido só na máquina do usuário.
+
+    Cada arquivo `*.md` em `~/.dev_tunnel/ai-context/` vale para as conexões
+    cujo alias contém o nome do arquivo (sem extensão, sem diferenciar
+    maiúsculas): `meu-app.md` vale para `meu-app-prod`, `meu-app-homolog` etc.
+    O marcador `{root}` é trocado pela raiz remota da conexão.
+    """
+    if not os.path.isdir(AI_CONTEXT_ROOT):
+        return ""
+    alias = tunnel["alias"].lower()
+    parts = []
+    for name in sorted(os.listdir(AI_CONTEXT_ROOT)):
+        stem, ext = os.path.splitext(name)
+        if ext.lower() != ".md" or stem.lower() not in alias:
+            continue
+        with open(os.path.join(AI_CONTEXT_ROOT, name), encoding="utf-8") as f:
+            parts.append(f.read().replace("{root}", tunnel["root"]))
+    return "\n" + "\n".join(parts) if parts else ""
 
 
 def _draw_header(breadcrumb: str = "") -> None:
@@ -92,6 +118,7 @@ def _ensure_context_files(project_dir: str, tunnel: dict) -> None:
         alias=tunnel["alias"], route=tunnel["route"], port=tunnel["port"],
         pem=tunnel["pem"], user=tunnel["user"], root=tunnel["root"],
     )
+    content += _custom_context(tunnel)
     for _, _, filename in AGENTS:
         with open(os.path.join(project_dir, filename), "w") as f:
             f.write(content)

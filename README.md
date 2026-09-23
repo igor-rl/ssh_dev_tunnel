@@ -58,7 +58,7 @@ tunnel --port 2223         # porta local customizada (funciona com qualquer recu
 
 **1. Recurso:** Escolha IDE, IA ou Terminal (ou pule direto com a flag correspondente).
 
-**2. Conexão:** Selecione uma conexão salva, ou configure Jump Host + Servidor de Destino (IP Interno) na primeira vez.
+**2. Conexão:** Selecione uma conexão salva, ou configure Jump Host + Servidor de Destino (IP Interno) na primeira vez. Pela opção **✎ Editar Conexão** dá pra alterar nome, Jump Host, `user@IP` do servidor, path remoto e forçar a escolha de outra chave `.pem` — sem precisar remover e recriar.
 
 **3. Senha Única:** Insira a senha uma vez; ela é salva com segurança (Keychain do sistema, ou arquivo criptografado como fallback) e reaproveitada nas próximas conexões — sincroniza a chave `.pem` e abre o túnel automaticamente.
 
