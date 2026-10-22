@@ -1,4 +1,4 @@
-# 🚀 SSH DEV TUNNEL (Precifica)
+# 🚀 SSH DEV TUNNEL
 
 Utilitário de linha de comando para automação de túneis SSH reversos. Acesse servidores internos através de Jump Hosts de forma segura, com três formas de trabalhar sobre a mesma conexão: **IDE** (Cursor/VS Code), **IA** (Claude Code/Gemini, somente leitura) e **Terminal** (shell SSH direto).
 
@@ -87,6 +87,18 @@ Seus servidores cadastrados, chaves PEM e senhas salvas ficam em:
 ```
 
 Persistem entre atualizações e reinstalações.
+
+---
+
+## 🧠 Contexto de IA por conexão
+
+No modo IA, o `tunnel` escreve um `CLAUDE.md`/`GEMINI.md` com as regras da sessão (somente leitura). Para acrescentar instruções específicas de um projeto, crie um arquivo Markdown em `~/.dev_tunnel/ai-context/`:
+
+```
+~/.dev_tunnel/ai-context/meu-app.md
+```
+
+Ele vale para toda conexão cujo nome (alias) contém `meu-app`, sem diferenciar maiúsculas. O marcador `{root}` é trocado pela raiz remota da conexão. Esses arquivos ficam só na sua máquina.
 
 ---
 

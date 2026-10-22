@@ -5,7 +5,7 @@ import json, os
 
 # ─── Metadados ──────────────────────────────────────────────────
 __author__  = "Igor Lage"
-__company__ = "Precifica"
+__company__ = "IRL"
 __version__ = "4.0.3"
 
 # ─── Estrutura de Diretórios ─────────────────────────────────────

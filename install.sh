@@ -19,7 +19,7 @@ DIV="${DIVIDER}${W}${NC}"
 header() {
   clear
   echo -e "$DIV"
-  echo -e "  ${BOLD}${INFO}PRECIFICA${NC}  ${DIVIDER}│${NC}  ${ACCENT}${BOLD}SSH DEV TUNNEL${NC}  ${DIM}Instalador${NC}"
+  echo -e "  ${BOLD}${INFO}IRL${NC}  ${DIVIDER}│${NC}  ${ACCENT}${BOLD}SSH DEV TUNNEL${NC}  ${DIM}Instalador${NC}"
   echo -e "$DIV"
   [ -n "$1" ] && echo -e "  ${LABEL}ETAPA   ${NC}  ${ACCENT}$1${NC}\n$DIV"
 }
